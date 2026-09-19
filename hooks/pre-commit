@@ -1,0 +1,66 @@
+#!/bin/bash
+# The honesty gate, made structural.
+#
+# A rule written in markdown with nothing mechanical behind it gets skipped on the
+# night it matters most. This hook is what turns the closing ritual from a habit into
+# a property of the repository: no commit lands while the brain is inconsistent.
+#
+# INSTALL (from the vault root):
+#     cp hooks/pre-commit .git/hooks/pre-commit
+#     chmod +x .git/hooks/pre-commit
+#
+# It runs two things and refuses the commit if either one objects:
+#   1. tools/lint.py - broken links, orphans, bad citation anchors, conflict markers,
+#      date errors, a self-pasted file, a link target git does not know about. Exit
+#      code decides.
+#   2. tools/connect.py - reciprocity. A GAP line means you named a page and never
+#      opened it to record the same fact from its side. The hook greps for GAP rather
+#      than reading the exit code, so an advisory finding never blocks a commit.
+#
+# THE ESCAPE HATCH, and what it costs. `git commit --no-verify` skips this hook. That
+# is for a finding you have READ and decided to accept - never for one nobody has
+# looked at. When you use it, write the accepted finding into wiki/log.md in the same
+# commit. An override with no record is indistinguishable from a gate that was never
+# run, and the next session has no way to tell which it inherited.
+
+set -u
+
+ROOT=$(git rev-parse --show-toplevel) || exit 1
+cd "$ROOT" || exit 1
+
+if [ ! -f tools/lint.py ] || [ ! -f tools/connect.py ]; then
+  echo "pre-commit: tools/lint.py or tools/connect.py is missing - the gate cannot run."
+  echo "  A gate that silently stops checking is worse than no gate, so this refuses."
+  exit 1
+fi
+
+echo "pre-commit: running the honesty gate..."
+
+LINT_OUT=$(python3 tools/lint.py 2>&1)
+LINT_RC=$?
+if [ "$LINT_RC" -ne 0 ]; then
+  echo "$LINT_OUT"
+  echo ""
+  echo "COMMIT REFUSED - lint.py found something that makes the vault wrong for every"
+  echo "other clone. Fix the lines above, or, if you have read them and decided to"
+  echo "accept them, commit with --no-verify and write what you accepted into"
+  echo "wiki/log.md in the same commit."
+  exit 1
+fi
+
+CONNECT_OUT=$(python3 tools/connect.py 2>&1) || true
+if printf '%s\n' "$CONNECT_OUT" | grep -q '^  GAP '; then
+  printf '%s\n' "$CONNECT_OUT"
+  echo ""
+  echo "COMMIT REFUSED - you named a page and never wrote the same fact from its side."
+  echo "Open each target above, record it there, and link back. If a one-way mention is"
+  echo "genuinely just passing context, say so in wiki/log.md and commit with"
+  echo "--no-verify."
+  exit 1
+fi
+
+# Everything connect.py printed is worth seeing even when nothing blocks: the advisory
+# lines and the claim-reciprocity list are the half of the ritual a gate cannot enforce.
+printf '%s\n' "$CONNECT_OUT"
+echo "pre-commit: gate clean."
+exit 0

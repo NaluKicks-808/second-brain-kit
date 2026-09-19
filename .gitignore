@@ -1,0 +1,39 @@
+# Large originals stay out of the repository. Keep a small manifest in data/
+# saying what exists and where, and leave the archive itself on disk.
+data/archives/
+*.sqlite
+*.db
+*.zip
+*.tar
+*.tar.gz
+*.mp3
+*.m4a
+*.wav
+*.mp4
+*.mov
+
+# Obsidian writes these constantly and they are pure local state. graph.json is
+# deliberately NOT ignored: the linter checks the filter inside it, because that
+# filter is what keeps the source layer out of the graph view.
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/cache
+.obsidian/plugins/
+.trash/
+
+# Anything you deliberately keep off the remote. Create the folder if you want it.
+private/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# macOS, Windows, editors
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
