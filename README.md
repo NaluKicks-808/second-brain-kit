@@ -34,6 +34,18 @@ All of them live in `tools/` and run with `python3 tools/<name>.py` from anywher
 
 **`critic.py`** is the growth loop. It reads the vault and tells you where it is thin: pages the brain treats as important but has never fleshed out, questions it recorded and never answered, central pages going stale, pages barely connected to anything. It never edits.
 
+**`quote_check.py`** asks one question about every quotation in the wiki: do those words actually appear in the entry the sentence cites? It takes each double-quoted run of four or more words in a sentence that links into `raw/entries/`, and looks for it in the entries that sentence cites. A quote it cannot find is reported with a second verdict saying whether the words are in a different entry, which means the citation points at the wrong source, or in no entry at all. It tolerates formatting and nothing else: curly against straight quotes, emphasis markers, dashes, and the full stop a page puts inside its closing quote, but no stemming and no fuzzy matching, so a reworded quotation is still a finding. A run joined by an ellipsis is split and each piece checked on its own. `--changed` limits it to the wiki files you have edited since the last commit, `--page` to one file, `--json` to a machine-readable dump, and `--all` adds the underscore pages and `log.md`.
+
+It is **advisory and deliberately not wired into the commit gate.** A quotation that cannot be found here is not proof that anything was invented: a brain quotes sources it does not hold, including pages read in a browser, books, and recordings whose entry is a summary rather than a transcript. The tool exits 0 always. Run it after an absorb, read the list, and fix the ones that are wrong on the page itself, under the normal absorb rules, by rereading the source. Nothing here rewrites your prose. An entry marked `private: true` is searched like any other, so a quotation taken from one passes, and it is named by filename only and never quoted back at you.
+
+The example pages that ship with this kit paraphrase their source rather than quoting it, so a first run reports nothing. To watch the tool work, add this line to `wiki/people/sam-rivera.md` and run it again. The citation link at the end matters: the tool only checks quotations in sentences that cite an entry.
+
+```
+Sam called the clipboard "the only system that never lies" ([[2026-09-12_shop-visit-notes#^bench-fits-two]]).
+```
+
+Those seven words are not in the entry, so the tool reports them. Change the quotation to "the bench only fits two", which is there, and it passes.
+
 **`agenda.py`** prints what is still outstanding, read live from the ledger every time you run it.
 
 **`safe_commit.sh`** is how a session commits. It takes a message and the list of files you actually edited, waits its turn behind any other session, pulls in whatever they pushed, refuses to proceed over an unfinished merge, runs the gates, commits, and retries the push through races.
@@ -59,7 +71,8 @@ CLAUDE.md          the rulebook every Claude Code session reads first
 README.md          this file
 LICENSE            MIT
 hooks/pre-commit   the gate, to be copied into .git/hooks/
-tools/             lint, connect, find, deepfind, critic, agenda, safe_commit
+tools/             lint, connect, find, deepfind, critic, quote_check, agenda, safe_commit
+tools/tests/       the test suite for the tools, run with python3 on each file
 wiki/              the compiled brain, plus the index, ledger, log and postmortems
 raw/entries/       normalized full text, one file per source chunk
 data/              the immutable originals
