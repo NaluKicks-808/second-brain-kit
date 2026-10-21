@@ -66,7 +66,7 @@ class Twins(unittest.TestCase):
         newer_line = [l for l in out.split("\n") if "Dentist checkup" in l][0]
         self.assertTrue(newer_line.startswith("| DROPPED 2026-10-20 via event_twin - twin of"))
         self.assertIn("~~2026-10-23 14:30~~", newer_line)
-        self.assertIn("**Dentist checkup downtown clinic** | because |", newer_line)
+        self.assertIn("**~~Dentist checkup downtown clinic~~** | because |", newer_line)
         self.assertIn(B, out)
         self.assertEqual(et.open_twins(out), [])      # closed now: idempotent
         self.assertEqual(et.merge(out, et.open_twins(out), "2026-10-21"), out)

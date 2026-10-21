@@ -35,6 +35,12 @@ class Expire(unittest.TestCase):
         for row in (FUTURE, PLAIN, BAD):
             self.assertIn(row, lines)
 
+    def test_title_without_bold_is_struck_whole(self):
+        row = "| 2026-10-20 | Date | Shop closed right now | expires: 2026-10-21T09:00 |"
+        new, closed = er.expire_text(led(row), NOW)
+        self.assertEqual(len(closed), 1)
+        self.assertIn("| ~~Shop closed right now~~ |", new)
+
     def test_exact_moment_closes(self):
         _, closed = er.expire_text(led(FUTURE), dt.datetime(2026, 10, 21, 15, 0))
         self.assertEqual(len(closed), 1)

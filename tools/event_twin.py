@@ -140,7 +140,17 @@ def merge(ledger_text, twins, today=None):
         original = line[first + 1:boundary].strip()
         stamp = 'DROPPED {} via event_twin - twin of {}; ~~{}~~'.format(
             today or dt.date.today().isoformat(), agenda.plain(older['task'], 60), original)
-        lines[number - 1] = line[:first + 1] + ' ' + stamp + ' ' + line[boundary:]
+        line = line[:first + 1] + ' ' + stamp + ' ' + line[boundary:]
+        # Lint's check 15 reads closure from the stamp AND a struck title, so the
+        # What cell (third cell) gets struck too; every other cell stays as it was.
+        parts = re.split(r'(?<!\\)\|', line)
+        if len(parts) > 4:
+            what = parts[3]
+            lead = what[:len(what) - len(what.lstrip())]
+            trail = what[len(what.rstrip()):]
+            parts[3] = lead + agenda.strike_title(what.strip()) + trail
+            line = '|'.join(parts)
+        lines[number - 1] = line
     return '\n'.join(lines)
 
 

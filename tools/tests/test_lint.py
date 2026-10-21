@@ -253,6 +253,35 @@ class ClosingStampTests(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertFalse(lines_with(out, "HALFCLOSED"), out)
 
+    def test_hyphen_stamp_and_tagged_title_pass(self):
+        v = self.base()
+        v.append("wiki/_reminders.md",
+                 "| DROPPED 2026-09-01 via expired - 2026-08-30 | Date | **~~Send the quote~~** | because |\n"
+                 "| DONE 2026-09-01 via sam — x | Date | `[home · S]` **~~Call the shop~~** | because |\n")
+        rc, out = v.run()
+        self.assertEqual(rc, 0, out)
+        self.assertFalse(lines_with(out, "HALFCLOSED"), out)
+
+    def test_closing_tools_output_passes(self):
+        """What expire_rows and event_twin write must clear check 15 (review 2026-10-21)."""
+        sys.path.insert(0, str(TOOLS))
+        import expire_rows
+        import event_twin
+        head = "# L\n\n## Open\n\n| Trigger | Type | What to surface | Why it matters |\n|---|---|---|---|\n"
+        exp = "| 2026-10-20 | Date | **Shop closed.** | expires: 2026-10-21T09:00 |"
+        out1, _ = expire_rows.expire_text(head + exp + "\n", datetime.datetime(2026, 10, 21, 12, 0))
+        a = "| 2026-10-23 14:30 | Date | **Dentist checkup downtown clinic** | because |"
+        b = "| 2026-10-23 14:30 | Date | `[health · quick]` **Downtown clinic dentist visit** | again |"
+        twin_text = head + a + "\n" + b + "\n"
+        out2 = event_twin.merge(twin_text, event_twin.open_twins(twin_text), today="2026-10-20")
+        rows = [l for l in (out1 + "\n" + out2).split("\n") if l.startswith("| DROPPED")]
+        self.assertEqual(len(rows), 2, rows)
+        v = self.base()
+        v.append("wiki/_reminders.md", "\n".join(rows) + "\n")
+        rc, out = v.run()
+        self.assertEqual(rc, 0, out)
+        self.assertFalse(lines_with(out, "HALFCLOSED"), out)
+
     def test_old_half_closed_row_is_not_read(self):
         v = Vault(self)
         v.write("wiki/_reminders.md",

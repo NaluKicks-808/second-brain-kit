@@ -75,7 +75,7 @@ def expire_text(ledger_text, now):
         if not moment or now < moment:
             continue
         cells[1] = 'DROPPED {} via expired - {}'.format(now.strftime('%Y-%m-%d'), trigger)
-        cells[3] = re.sub(r'\*\*(.+?)\*\*', lambda mm: '**~~{}~~**'.format(mm.group(1)), what, count=1)
+        cells[3] = agenda.strike_title(what)
         lines[i] = '| ' + ' | '.join(cells[1:5]) + ' |'
         closed.append(agenda.plain(what, 80))
     return '\n'.join(lines), closed

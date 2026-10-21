@@ -654,8 +654,12 @@ def _ledger_added_rows():
             if l.startswith('+') and not l.startswith('+++')}
 
 
-DONE_STAMP = re.compile(r'^\s*(?:DONE|DROPPED) \d{4}-\d{2}-\d{2} via .*?—\s*')
+# The separator after `via <who>` is an em dash or a spaced hyphen: the kit's own
+# closing tools (expire_rows, event_twin) write ` - `, people often type ` — `.
+DONE_STAMP = re.compile(r'^\s*(?:DONE|DROPPED) \d{4}-\d{2}-\d{2} via .*?(?:—|\s-\s)\s*')
 STRUCK_TITLE = re.compile(r'^\s*(?:\*\*)?\s*~~')
+# The optional `[area · size]` tag leads the What cell (agenda.TAG); strip it first.
+LEDGER_TAG = re.compile(r'^\s*`\[[^\]]*\]`\s*')
 half_closed, tool_early = [], []
 _added = _ledger_added_rows()
 _added_note = '' if _added is not None else ' (no diff against origin/main - not checked)'
@@ -669,9 +673,9 @@ if _added and _open_lines is not None:
             _cells = _split_row(_t)
             _why = []
             if not DONE_STAMP.match(_cells[0] if _cells else ''):
-                _why.append("the Trigger must open with exactly `DONE YYYY-MM-DD via <who> — ` "
-                            "(no clock time, no em dash inside the via text)")
-            if len(_cells) < 3 or not STRUCK_TITLE.match(_cells[2]):
+                _why.append("the Trigger must open with exactly `DONE YYYY-MM-DD via <who> - ` "
+                            "(or ` — `; no clock time, no dash inside the via text)")
+            if len(_cells) < 3 or not STRUCK_TITLE.match(LEDGER_TAG.sub('', _cells[2])):
                 _why.append("the What title must be struck through, `**~~title~~**`")
             if _why:
                 half_closed.append(
@@ -681,7 +685,7 @@ if _added and _open_lines is not None:
             # Check 16 rides the same rows: a script's `via <name>.py` stamp on a row whose
             # own date is still ahead. A script closes what it can verify happened, and a
             # date still ahead has not happened. A person may close early; a script may not.
-            _tm = re.match(r'^\|\s*DONE (\d{4}-\d\d-\d\d) via ([^|]*?\.py)\b[^|]*?—\s*\*\*(\d{4}-\d\d-\d\d)', _t)
+            _tm = re.match(r'^\|\s*DONE (\d{4}-\d\d-\d\d) via ([^|]*?\.py)\b[^|]*?(?:—|\s-\s)\s*\*\*(\d{4}-\d\d-\d\d)', _t)
             if _tm and _tm.group(3) > _tm.group(1):
                 tool_early.append(
                     "wiki/_reminders.md:%d: closed %s via %s but due %s. A script closes only "

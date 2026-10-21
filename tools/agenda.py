@@ -62,6 +62,20 @@ def is_closed(trigger, what):
     return bool(CLOSED_WORDS.match(title) or STRUCK_TITLE.search(title))
 
 
+def strike_title(what):
+    """The What cell with its title struck, the way lint's check 15 reads closure: the
+    first `**bold**` span becomes `**~~bold~~**`; with no bold span, the whole title
+    after the optional `[area]` tag is struck. Already struck stays as it is."""
+    what = what or ''
+    tag = TAG.match(what)
+    head, rest = (what[:tag.end()], what[tag.end():]) if tag else ('', what)
+    if STRUCK_TITLE.search(rest.strip()):
+        return what
+    if re.search(r'\*\*(.+?)\*\*', rest):
+        return head + re.sub(r'\*\*(.+?)\*\*', lambda m: '**~~{}~~**'.format(m.group(1)), rest, count=1)
+    return head + '~~{}~~'.format(rest.strip()) if rest.strip() else what
+
+
 def rows(include_closed=False):
     text = open(LEDGER, encoding='utf-8').read()
     # Both boundaries are matched as HEADINGS, at the start of a line. A plain
