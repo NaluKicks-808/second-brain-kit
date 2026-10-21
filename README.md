@@ -10,7 +10,7 @@ You need three things on your computer: git, Python 3, and Claude Code. If you h
 
 1. **Get the files.** Download or clone this repository into a folder where you keep things you care about. Rename the folder to whatever you want your brain to be called.
 2. **Make it a repository of its own.** Open a terminal in that folder and run `git init`, then `git add -A`, then `git commit -m "start"`. This is what makes every later change undoable.
-3. **Install the gate.** Run `cp hooks/pre-commit .git/hooks/pre-commit` and then `chmod +x .git/hooks/pre-commit`. From now on, a commit that would leave the brain inconsistent is refused, with a message saying exactly what is wrong.
+3. **Install the gate.** Run `cp hooks/pre-commit .git/hooks/pre-commit` and then `chmod +x .git/hooks/pre-commit`. From now on, a commit that would leave the brain inconsistent is refused, with a message saying exactly what is wrong. The first run of `tools/safe_commit.sh` also registers the merge driver for the reminders ledger (see `.gitattributes`), so two sessions adding rows at once merge cleanly instead of stopping on conflict markers.
 4. **Check that it works.** Run `python3 tools/lint.py`. You should see a short report ending with no errors. Then run `python3 tools/find.py bike` and you should get the example pages back.
 5. **Tell Claude who you are.** Open `CLAUDE.md`, which is the rulebook every Claude Code session reads before it touches anything, and replace the second paragraph with one sentence about whose brain this is and what it covers.
 6. **Delete the examples.** The three fictional pages about a bike shop are there so the tools have something to chew on. Delete `wiki/people/sam-rivera.md`, `wiki/projects/riverside-cycle-works.md` and `raw/entries/2026-09-12_shop-visit-notes.md`, and take their lines out of `wiki/_index.md`.
@@ -24,7 +24,7 @@ If something refuses to commit, read the message. The gates are written to say w
 
 All of them live in `tools/` and run with `python3 tools/<name>.py` from anywhere. None of them touch the network.
 
-**`lint.py`** is the honesty gate. Broken links, links into the source layer that should be plain text, pages nothing points at, citation anchors that land nowhere, unfinished merges left in a file, a page accidentally pasted into itself, dates in the future, a link whose target exists on your disk and in nobody else's clone, and malformed rows in the reminders ledger. It exits non-zero on anything that would make the vault wrong for another reader, which is what the commit hook reads.
+**`lint.py`** is the honesty gate. Broken links, links into the source layer that should be plain text, pages nothing points at, citation anchors that land nowhere, unfinished merges left in a file, a page accidentally pasted into itself, dates in the future, a link whose target exists on your disk and in nobody else's clone, malformed rows in the reminders ledger, a ledger row stamped closed in a way a reader cannot see, a row a script closed before its date, test files that write outside their own folder or that the test runner would never find, two postmortems with the same number, and a top-level folder the README does not explain. It also warns, without blocking, on guess words such as "presumably" or "almost certainly" in newly added wiki prose, on an answered question with no date, and on a skipped postmortem number. A few checks that only make sense once a vault has grown a particular habit sit in a `CONFIG` block at the top of the file and are off by default. It exits non-zero on anything that would make the vault wrong for another reader, which is what the commit hook reads.
 
 **`connect.py`** is the reciprocity gate. It finds every page you newly named this session whose own page you never opened, and refuses to let that sit. It also prints an advisory list of facts you changed that other pages also assert, so a right fact does not stop travelling halfway.
 
@@ -48,6 +48,14 @@ Those seven words are not in the entry, so the tool reports them. Change the quo
 
 **`agenda.py`** prints what is still outstanding, read live from the ledger every time you run it.
 
+**`expire_rows.py`** closes ledger rows whose moment has passed. A time-bound row ("waiting on the 3pm call") can carry its own end as `expires: YYYY-MM-DDTHH:MM` in its last cell, in local time. Once that moment is past, the tool stamps the row `DROPPED <date> via expired` and strikes its title, so the agenda stops stating it as current. It never touches a row without the marker, a second run changes nothing, and `--dry-run` shows what it would close.
+
+**`event_twin.py`** finds two open ledger rows that are really one timed event, worded twice. It only fires on the narrow case it can be sure of: same date, same explicit time, and titles that share most of their words. It reports by default; `--merge` closes the newer of each pair.
+
+**`brain_quiz.py`** is a scored quiz of the brain. You write questions with their right answers and the pages those answers came from in `quiz/questions.jsonl` (copy the empty template `quiz/questions.example.jsonl`). The tool asks a model to answer each question using only the vault and the search tools, has a second call judge the answer against yours, and writes a score and a trend line under `quiz/`. A question whose cited page changed after you last checked it is flagged for a recheck. This is the only tool that calls a model: the commands are pluggable (`--answer-cmd`, `--judge-cmd`) and default to Claude Code in headless mode, and `--dry-run` runs offline. Run it weekly and a falling score tells you the brain got worse before you trust it with something that matters.
+
+**`ledger_merge.py`** is the git merge driver for `wiki/_reminders.md`. When two sessions only added rows at the same spot, it keeps both; any other conflict still stops with markers.
+
 **`safe_commit.sh`** is how a session commits. It takes a message and the list of files you actually edited, waits its turn behind any other session, pulls in whatever they pushed, refuses to proceed over an unfinished merge, runs the gates, commits, and retries the push through races.
 
 ## The ideas that make this different from a folder of notes
@@ -67,20 +75,25 @@ Those seven words are not in the entry, so the tool reports them. Change the quo
 ## Layout
 
 ```
-CLAUDE.md          the rulebook every Claude Code session reads first
+CLAUDE.md          the rulebook every Claude Code session reads first (kept short; the
+                   writing rules live in .claude/rules/wiki-writing.md)
 README.md          this file
 LICENSE            MIT
 hooks/pre-commit   the gate, to be copied into .git/hooks/
-tools/             lint, connect, find, deepfind, critic, quote_check, agenda, safe_commit
+tools/             lint, connect, find (+ find_rank), deepfind, critic, quote_check, agenda,
+                   expire_rows, event_twin, brain_quiz, guess_words, ledger_merge, safe_commit
 tools/tests/       the test suite for the tools, run with python3 on each file
 wiki/              the compiled brain, plus the index, ledger, log and postmortems
 raw/entries/       normalized full text, one file per source chunk
 data/              the immutable originals
 .obsidian/         a graph filter that keeps the source layer out of the graph view
+.claude/rules/     the writing rules, loaded by Claude Code only when a session touches wiki/ or raw/
+.gitattributes     merge rules: the log merges by union, the ledger through ledger_merge.py
+quiz/              the brain quiz: an empty question template, and the runs once you have some
 ```
 
 ## Notes
 
-The two-layer idea is not original to this kit. Several people have described a similar pattern publicly for keeping a language-model-maintained wiki over a raw archive. What is here is one working implementation of it, along with the gates that a couple of years of getting it wrong turned out to require.
+The two-layer idea is not original to this kit. Several people have described a similar pattern publicly for keeping a language-model-maintained wiki over a raw archive. What is here is one working implementation of it, along with the gates that a few months of getting it wrong, every day, turned out to require.
 
 Everything in `tools/` is plain Python 3 and bash with no dependencies to install. Nothing calls a model and nothing touches the network, so the gates keep working when the clever parts are unavailable.
