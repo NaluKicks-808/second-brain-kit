@@ -1,0 +1,11 @@
+# Template for quiz/questions.jsonl. Copy this file to quiz/questions.jsonl and add your own questions.
+# Lines starting with # and blank lines are ignored. One JSON object per line, all six fields required:
+#   id        short unique name
+#   q         the question, asked of the brain
+#   gold      the correct answer, one or two sentences
+#   facts     list of 2-4 key facts a right answer must contain
+#   cites     list of repo-relative pages the gold answer came from
+#   verified  YYYY-MM-DD, the day you last checked the gold against those pages
+# A page whose frontmatter `updated:` is later than `verified` flags the gold for a recheck.
+# Fake placeholder (a comment, not a question):
+# {"id": "example-1", "q": "What colour is the shop door?", "gold": "Blue.", "facts": ["blue"], "cites": ["wiki/projects/example.md"], "verified": "2026-01-01"}
