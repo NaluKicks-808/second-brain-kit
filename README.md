@@ -22,7 +22,7 @@ If something refuses to commit, read the message. The gates are written to say w
 
 ## What each tool does
 
-All of them live in `tools/` and run with `python3 tools/<name>.py` from anywhere. None of them touch the network.
+All of them live in `tools/` and run with `python3 tools/<name>.py` from anywhere. None of them touch the network, except `brain_quiz.py`, which calls a model through a command you choose.
 
 **`lint.py`** is the honesty gate. Broken links, links into the source layer that should be plain text, pages nothing points at, citation anchors that land nowhere, unfinished merges left in a file, a page accidentally pasted into itself, dates in the future, a link whose target exists on your disk and in nobody else's clone, malformed rows in the reminders ledger, a ledger row stamped closed in a way a reader cannot see, a row a script closed before its date, test files that write outside their own folder or that the test runner would never find, two postmortems with the same number, and a top-level folder the README does not explain. It also warns, without blocking, on guess words such as "presumably" or "almost certainly" in newly added wiki prose, on an answered question with no date, and on a skipped postmortem number. A few checks that only make sense once a vault has grown a particular habit sit in a `CONFIG` block at the top of the file and are off by default. It exits non-zero on anything that would make the vault wrong for another reader, which is what the commit hook reads.
 
@@ -96,4 +96,4 @@ quiz/              the brain quiz: an empty question template, and the runs once
 
 The two-layer idea is not original to this kit. Several people have described a similar pattern publicly for keeping a language-model-maintained wiki over a raw archive. What is here is one working implementation of it, along with the gates that a few months of getting it wrong, every day, turned out to require.
 
-Everything in `tools/` is plain Python 3 and bash with no dependencies to install. Nothing calls a model and nothing touches the network, so the gates keep working when the clever parts are unavailable.
+Everything in `tools/` is plain Python 3 and bash with no dependencies to install. No gate calls a model or touches the network, so the gates keep working when the clever parts are unavailable. The one tool that does call a model, `brain_quiz.py`, is a check you run by hand or on a schedule, never part of a commit.
