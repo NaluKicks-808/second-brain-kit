@@ -101,7 +101,7 @@ class TwoClones(unittest.TestCase):
         """B pushes two rows; A has its own uncommitted row at the same spot and pulls."""
         self.add_row(self.b, "| 2026-10-14 | later | **Upstream row one.** | z |\n"
                              "| 2026-10-16 | later | **Upstream row two.** | z |\n")
-        self.git(self.b, "commit", "-qam", "agency rows")
+        self.git(self.b, "commit", "-qam", "upstream rows")
         self.git(self.b, "push", "-q", "origin", "HEAD:main")
         if register:
             self.register(self.a)
