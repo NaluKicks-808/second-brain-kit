@@ -1,0 +1,13 @@
+# wiki/log.md is append-only: every session adds a block at the end and none edits an old one.
+# Two sessions appending at once is the normal case, not a conflict, so git keeps both sides
+# instead of writing conflict markers. A union merge can keep both halves of a real conflict,
+# which is harmless in an append-only log and wrong anywhere else: do not add another file here.
+wiki/log.md merge=union
+
+# wiki/_reminders.md gets a row-aware driver, NOT union. Two writers that each only ADD rows at
+# the same spot merge, ours then theirs; any other conflict keeps its markers and stops.
+# The driver is per clone (git does not copy it), so register it once; safe_commit.sh does this
+# on every run:
+#   git config merge.ledger-rows.driver "python3 tools/ledger_merge.py %O %A %B"
+# A clone without it falls back to git's normal merge.
+wiki/_reminders.md merge=ledger-rows

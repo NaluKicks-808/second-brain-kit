@@ -5,9 +5,13 @@
 # night it matters most. This hook is what turns the closing ritual from a habit into
 # a property of the repository: no commit lands while the brain is inconsistent.
 #
-# INSTALL (from the vault root):
+# INSTALL. git does not clone .git/hooks, so this tracked file is the canonical gate.
+# tools/safe_commit.sh installs it where git looks (it honours core.hooksPath and worktrees)
+# whenever a clone has no executable hook, and names a single line if an installed hook runs
+# different checks. By hand, from the vault root:
 #     cp hooks/pre-commit .git/hooks/pre-commit
 #     chmod +x .git/hooks/pre-commit
+# Change the gate HERE; keep this file executable.
 #
 # It runs two things and refuses the commit if either one objects:
 #   1. tools/lint.py - broken links, orphans, bad citation anchors, conflict markers,
@@ -20,7 +24,8 @@
 # THE ESCAPE HATCH, and what it costs. `git commit --no-verify` skips this hook. That
 # is for a finding you have READ and decided to accept - never for one nobody has
 # looked at. When you use it, write the accepted finding into wiki/log.md in the same
-# commit. An override with no record is indistinguishable from a gate that was never
+# commit - or let `tools/safe_commit.sh --no-verify="<why>" ...` do it, which runs both tools
+# and writes their actual finding lines into the log for you. An override with no record is indistinguishable from a gate that was never
 # run, and the next session has no way to tell which it inherited.
 
 set -u
@@ -48,7 +53,19 @@ if [ "$LINT_RC" -ne 0 ]; then
   exit 1
 fi
 
-CONNECT_OUT=$(python3 tools/connect.py 2>&1) || true
+CONNECT_OUT=$(python3 tools/connect.py 2>&1); CONNECT_RC=$?
+# connect.py exits non-zero both when it finds GAP or NEW lines and when it crashes. Only the
+# second is a crash: a traceback the GAP grep cannot see would otherwise pass a commit, and a
+# GAP-only exit reported as "crashed" sends a session looking for a bug that is not there.
+# GAP and NEW are the two non-zero exits this gate can account for; anything else is a crash.
+if printf '%s\n' "$CONNECT_OUT" | grep -q 'Traceback' \
+   || { [ "$CONNECT_RC" -ne 0 ] && ! printf '%s\n' "$CONNECT_OUT" | grep -qE '^  (GAP|NEW) '; }; then
+  printf '%s\n' "$CONNECT_OUT"
+  echo ""
+  echo "COMMIT REFUSED - connect.py crashed (exit $CONNECT_RC). A gate that crashes has not run."
+  echo "Fix the crash and commit again."
+  exit 1
+fi
 if printf '%s\n' "$CONNECT_OUT" | grep -q '^  GAP '; then
   printf '%s\n' "$CONNECT_OUT"
   echo ""
