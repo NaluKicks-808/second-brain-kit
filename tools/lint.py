@@ -32,7 +32,12 @@
 #      else prints as conflict/warn, because no git command could clear a file git
 #      does not track.
 #  10. DUPLICATE - a file pasted into itself: a page that starts its own opening
-#      frontmatter block again further down. Same blocking rule as check 9.
+#      frontmatter block again further down, or a heading repeated under the same parent
+#      headings in a file where each heading must be unique (CONFIG['unique_heading_files'],
+#      the index and the postmortem record by default). Blocking over the files git counts
+#      as part of the project; anything else prints as duplicate/warn, because no commit
+#      carries a file git ignores. The second rule catches what is left once somebody tidies
+#      a pasted copy's header without noticing the blocks under it.
 #  11. UNTRACKED - a link whose target is on this disk and not in git's index. It
 #      resolves here and nowhere else, so it is a broken link in every other clone.
 #  12. STRANDED - a file under raw/entries/ that is on this disk and not in git's
@@ -40,15 +45,53 @@
 #      to, so no other check can see it. Warns, because a sibling session's entry is
 #      legitimately in flight for a while.
 #  13. LEDGER - a row in the Open table of the reminders ledger that is not four
-#      cells, or whose Type is outside {Date, Event, Condition}. Such a row still
-#      reads correctly on the page and is invisible to every tool that reads the
-#      ledger for you, which is the failure the single-agenda rule exists to prevent.
+#      cells, whose Type is outside {Date, Event, Condition}, or whose Trigger and What
+#      cells are both empty (and, if CONFIG['ledger_require_tag'] is on, whose What cell
+#      has no `[area · size]` tag). Such a row still reads correctly on the page and is
+#      invisible to every tool that reads the ledger for you, which is the failure the
+#      single-agenda rule exists to prevent.
+#  14. ANSWERED - a tick-marked line in wiki/_question-bank.md with no YYYY-MM-DD on it,
+#      in the answer line below it, or in its nearest heading. Warns only. Silent when
+#      there is no question bank.
+#  15. HALFCLOSED - a DONE/DROPPED ledger row ADDED since origin/main whose Trigger does
+#      not open with exactly `DONE YYYY-MM-DD via <who> - ` or whose What title is not
+#      struck through; a tool that reads closure from the stamp and the strike sees it
+#      as still open. Blocks. Reads only added lines, so the ledger's history never
+#      floods it; quiet when there is no origin/main.
+#  16. TOOLEARLY - a DONE row added since origin/main stamped `via <name>.py` whose own
+#      date is still ahead of the close date. A script closes what it can verify
+#      happened, and a date still ahead has not. Blocks. Same quiet rule as check 15.
+#  17. FIXTURE - a file in tools/tests/ that builds a path out of its own directory.
+#      Two test runs over one tree share it and delete each other's fixture mid-assertion.
+#      Blocks. A test file that will not parse only warns (fixture/warn).
+#  18. DISCOVERY - a .py file in tools/tests/ whose name `unittest discover` ignores
+#      (not test*.py) and that does not say NOT A TEST MODULE in its text. It has left the
+#      suite and the suite's total does not say so. Blocks.
+#  19. RUNNER - a module-level `unittest.main()` that is not the last statement in its
+#      file. It ends in sys.exit(), so a direct run stops there and prints OK having
+#      skipped everything below. Blocks.
+#  20. GUESS - "almost certainly", "clearly", "which is why", "must have", "presumably"
+#      or "no doubt" in wiki prose ADDED since origin/main, outside callouts, blockquotes,
+#      code and double quotation marks (guess_words.py, beside this file). An inference
+#      belongs in a `> [!question]` or under `status: provisional`. Warns only; quiet
+#      when there is no origin/main.
+#  21. POSTNUM - two headings in wiki/_postmortems.md carrying the same number. Pages
+#      cite `[[_postmortems]] #N`, so a shared number makes every citation ambiguous.
+#      Blocks. A skipped number only warns (postnum/warn). Silent with no file.
+#  22. POSTFAM - an entry numbered CONFIG['postmortem_family_from'] or higher without its
+#      **Family:**, **Neighbours:** and **Outcome check:** lines. Blocks, but OFF unless
+#      the config is set, because it enforces one particular postmortem template.
+#  23. TOPMAP - a directory at the vault root that README.md does not name in backticks
+#      (`.git` and CONFIG['topmap_exempt'] excepted). Blocks, gitignored ones too.
 #
 # Exit 1 on: broken links, graph pollution, orphans counting the index, log-format
 # drift, date errors, broken citation anchors, a missing graph filter, a conflict
-# marker or a self-paste inside git's project set, an untracked link target, or a
-# malformed ledger row. Checks 4 and 12 and the date warnings never touch the exit
-# code.
+# marker or a self-paste inside git's project set, an untracked link target, a
+# malformed ledger row, a half-closed or script-closed-early ledger row, a test
+# fixture, discovery or runner defect, a duplicated postmortem number, a missing
+# postmortem family line (when enabled), or an unlisted top-level folder. Checks 4, 12,
+# 14 and 20, the date warnings, the unparseable-test-file warning and a skipped
+# postmortem number never touch the exit code.
 #
 # No network. No model call. Pure file reading and arithmetic, so it keeps working
 # when everything clever is unavailable.
@@ -58,6 +101,7 @@ import re
 import sys
 import glob
 import json
+import fnmatch
 import datetime
 import subprocess
 from pathlib import Path
@@ -72,6 +116,22 @@ ENTRIES = os.path.join(ROOT, 'raw', 'entries')
 # Pages that are machinery rather than articles: they are exempt from the orphan
 # and frontmatter checks. Add your own here if you grow another ledger.
 META = {'_index', 'log', '_reminders', '_postmortems'}
+
+# The knobs. Everything here is a decision about YOUR setup, so it lives in one place.
+CONFIG = {
+    # Files in which every heading must be unique under its parent headings (check 10).
+    # One block per thing is the contract of an index; a repeat means a paste.
+    'unique_heading_files': ('wiki/_index.md', 'wiki/_postmortems.md'),
+    # Check 13: demand an `[area · size]` tag on every ledger row's What cell. OFF: only
+    # useful if something you run reads those tags (a board, a mirror, a push job).
+    'ledger_require_tag': False,
+    # Check 22: the first postmortem number that must carry Family / Neighbours / Outcome
+    # check lines. None = off. Set a number, or LINT_POSTMORTEM_FAMILY_FROM=<n> in the
+    # environment, once you adopt that template. Earlier entries stay grandfathered.
+    'postmortem_family_from': int(os.environ.get('LINT_POSTMORTEM_FAMILY_FROM', '') or 0) or None,
+    # Check 23: top-level folders README.md need not name. `.git` is always exempt.
+    'topmap_exempt': ('.obsidian', '.claude', 'hooks'),
+}
 
 LINK = re.compile(r'\[\[([^\]\|#]+)(?:#[^\]\|]*)?(?:\|[^\]]*)?\]\]')
 # A raw entry filename: {date}_{slug}. Two checks read it - the date gate, which
@@ -409,6 +469,30 @@ for _d in (WIKI, ENTRIES):
                 _msg += ", %d times in all" % len(_again)
             (DUP_BAD if _git_project is None or _rel in _git_project else DUP_WARN).append(_msg)
 
+# Rule two of check 10: in the files that must hold one block per thing, no heading
+# repeats under the same chain of parent headings. Keyed on the chain, not the bare line,
+# so an index may have "Other" under two different categories.
+_DUP_HEADING = re.compile(r'^(#{1,6})[ \t]+\S')
+for _rel in CONFIG['unique_heading_files']:
+    try:
+        _hl = open(os.path.join(ROOT, _rel), encoding='utf-8', errors='replace').read().split('\n')
+    except OSError:
+        continue
+    _seen, _chain = {}, []
+    for _i, _ln in _unfenced(_hl, _frontmatter_end(_hl)):
+        _hm = _DUP_HEADING.match(_ln)
+        if not _hm:
+            continue
+        _lvl = len(_hm.group(1))
+        _chain = [c for c in _chain if c[0] < _lvl] + [(_lvl, _ln.rstrip())]
+        _key = tuple(c[1] for c in _chain)
+        if _key in _seen:
+            _msg = ("%s:%d repeats the heading at line %d: %s"
+                    % (_rel, _i + 1, _seen[_key] + 1, _ln.rstrip()[:100]))
+            (DUP_BAD if _git_project is None or _rel in _git_project else DUP_WARN).append(_msg)
+        else:
+            _seen[_key] = _i
+
 # ── check 11: a link target git does not know about ───────────────────────────
 untracked_links, untracked_link_paths = [], set()
 if _git_indexed is not None:
@@ -465,8 +549,10 @@ def _plain(s):
     return re.sub(r'\s+', ' ', s.replace('**', '').replace('~~', '')).strip()
 
 
+TAG_RX = re.compile(r'\[[^\]\[]*·[^\]\[]*\]')
 ledger_bad = []
 _ledger = os.path.join(WIKI, '_reminders.md')
+_open_lines = None      # (line offset, lines of the Open table), shared with checks 15 and 16
 if os.path.isfile(_ledger):
     try:
         _ltext = open(_ledger, encoding='utf-8', errors='replace').read()
@@ -474,6 +560,7 @@ if os.path.isfile(_ledger):
         if _lhead:
             _lbase = _ltext[:_lhead.end()].count('\n')
             _lbody = NEXT_SECTION.split(_ltext[_lhead.end():], 1)[0].split('\n')
+            _open_lines = (_lbase, _lbody)
             for _i, _line in enumerate(_lbody):
                 _t = _line.strip()
                 if not _t.startswith('|'):
@@ -489,10 +576,10 @@ if os.path.isfile(_ledger):
                 if len(_cells) != LEDGER_CELLS:
                     ledger_bad.append(
                         "%s has %d cells and the Open table has %d (Trigger | Type | What "
-                        "to surface | Why it matters). Either a cell is missing, or an "
+                        "to surface | Why it matters). Either a cell is missing, an "
                         "unescaped pipe - usually inside a [[page|alias]] link, which must "
                         "be written [[page\\|alias]] in a table - has split one cell into "
-                        "two and shifted every cell after it: %s"
+                        "two and shifted every cell after it, or two rows share one line: %s"
                         % (_at, len(_cells), LEDGER_CELLS, _what))
                     continue
                 if _plain(_cells[1]).lower() not in LEDGER_TYPES:
@@ -500,9 +587,484 @@ if os.path.isfile(_ledger):
                         "%s has type %r, and the Open table knows Date, Event and "
                         "Condition. A row of any other type is skipped by every reader of "
                         "this file: %s" % (_at, _plain(_cells[1])[:40], _what))
+                    continue
+                if CONFIG['ledger_require_tag'] and not TAG_RX.search(_cells[2]):
+                    ledger_bad.append(
+                        "%s carries no `[area · size]` tag on its What cell, and "
+                        "CONFIG['ledger_require_tag'] is on: %s" % (_at, _what))
+                    continue
+                if not _plain(_cells[0]) and not _plain(_cells[2]):
+                    ledger_bad.append(
+                        "%s is four cells with a known type and an empty Trigger and an "
+                        "empty What, so there is nothing for a reader to surface: %s"
+                        % (_at, _what))
     except Exception as _e:
         # A check that silently stops checking is the failure it exists to prevent.
         ledger_bad.append('CHECK COULD NOT RUN: %s: %s' % (type(_e).__name__, _e))
+
+# ── check 14: an answered question with no date ───────────────────────────────
+# A tick-marked line in wiki/_question-bank.md says an open question was answered.
+# When it was answered is half the fact: whatever reads the bank to decide what is
+# still open cannot age an answer with no date, or order it against the question it
+# settles. The date may sit on the line, one indented line below it, or in the nearest
+# heading, because all three are ordinary ways to write an answer down. Warns only:
+# the file is free prose nobody was ever required to format, and a gate that can jam
+# every commit over a tick mark is not worth the date it recovers. Silent with no file.
+ANSWERED_MARK = re.compile(r'^\s*(?:[-*+]\s+)?(?:\*\*)?✅')
+ISO_ANYWHERE = re.compile(r'\b\d{4}-\d{2}-\d{2}\b')
+qbank_warn = []
+_qbank = os.path.join(WIKI, '_question-bank.md')
+if os.path.isfile(_qbank):
+    try:
+        _qlines = open(_qbank, encoding='utf-8', errors='replace').read().split('\n')
+        _qhead = ''
+        for _i, _line in enumerate(_qlines):
+            if re.match(r'^#{1,6}[ \t]+\S', _line):
+                _qhead = _line
+            if not ANSWERED_MARK.match(_line):
+                continue
+            if ISO_ANYWHERE.search(_line) or ISO_ANYWHERE.search(_qhead):
+                continue
+            _below = _qlines[_i + 1] if _i + 1 < len(_qlines) else ''
+            if _below[:1] in (' ', '\t') and ISO_ANYWHERE.search(_below):
+                continue
+            qbank_warn.append("wiki/_question-bank.md:%d is marked answered and no YYYY-MM-DD "
+                              "date says when, on the line, in the answer below it or in its "
+                              "heading: %s" % (_i + 1, _line.strip()[:90]))
+    except Exception as _e:
+        qbank_warn.append('CHECK COULD NOT RUN: %s: %s' % (type(_e).__name__, _e))
+
+# ── checks 15 and 16: closing stamps, read from the lines ADDED since origin/main ──
+# Both read only ledger lines added since origin/main, so a ledger with history never
+# floods them and every NEW stamp is still checked. With no origin/main (a fresh clone
+# without a remote, a repo never pushed) they say so on their count line and stay quiet.
+def _ledger_added_rows():
+    """Stripped lines added to wiki/_reminders.md since origin/main, or None when git
+    cannot say (no git, no origin/main, not the repository's top level)."""
+    if not _git_toplevel_is_root():
+        return None
+    try:
+        out = subprocess.run(['git', '-C', ROOT, 'diff', '--unified=0', 'origin/main', '--',
+                              'wiki/_reminders.md'], capture_output=True, text=True, timeout=30)
+    except Exception:
+        return None
+    if out.returncode != 0:
+        return None
+    return {l[1:].strip() for l in out.stdout.split('\n')
+            if l.startswith('+') and not l.startswith('+++')}
+
+
+DONE_STAMP = re.compile(r'^\s*(?:DONE|DROPPED) \d{4}-\d{2}-\d{2} via .*?—\s*')
+STRUCK_TITLE = re.compile(r'^\s*(?:\*\*)?\s*~~')
+half_closed, tool_early = [], []
+_added = _ledger_added_rows()
+_added_note = '' if _added is not None else ' (no diff against origin/main - not checked)'
+if _added and _open_lines is not None:
+    _hc_base, _hc_lines = _open_lines
+    try:
+        for _i, _line in enumerate(_hc_lines):
+            _t = _line.strip()
+            if _t not in _added or not re.match(r'^\|\s*(?:DONE|DROPPED)\b', _t):
+                continue
+            _cells = _split_row(_t)
+            _why = []
+            if not DONE_STAMP.match(_cells[0] if _cells else ''):
+                _why.append("the Trigger must open with exactly `DONE YYYY-MM-DD via <who> — ` "
+                            "(no clock time, no em dash inside the via text)")
+            if len(_cells) < 3 or not STRUCK_TITLE.match(_cells[2]):
+                _why.append("the What title must be struck through, `**~~title~~**`")
+            if _why:
+                half_closed.append(
+                    "wiki/_reminders.md:%d: %s; otherwise a tool that reads closure from the "
+                    "stamp and the strike sees the row as still open"
+                    % (_hc_base + _i + 1, '; '.join(_why)))
+            # Check 16 rides the same rows: a script's `via <name>.py` stamp on a row whose
+            # own date is still ahead. A script closes what it can verify happened, and a
+            # date still ahead has not happened. A person may close early; a script may not.
+            _tm = re.match(r'^\|\s*DONE (\d{4}-\d\d-\d\d) via ([^|]*?\.py)\b[^|]*?—\s*\*\*(\d{4}-\d\d-\d\d)', _t)
+            if _tm and _tm.group(3) > _tm.group(1):
+                tool_early.append(
+                    "wiki/_reminders.md:%d: closed %s via %s but due %s. A script closes only "
+                    "what it can verify happened; reopen the row, or close it by hand."
+                    % (_hc_base + _i + 1, _tm.group(1), _tm.group(2).strip(), _tm.group(3)))
+    except Exception as _e:
+        half_closed.append('CHECK COULD NOT RUN: %s: %s' % (type(_e).__name__, _e))
+
+# ── checks 17, 18 and 19: test hygiene over tools/tests/ ───────────────────────
+# Three ways a test suite goes green while testing air, all readable from the files.
+#   17. FIXTURE ISOLATION: no test file may build a path out of its own directory. Two
+#       test runs over one tree share that directory, so a fixed fixture name in it is a
+#       race between them, and the failure lands on whichever module is slowest, which
+#       accuses code that did not change. Use tempfile.TemporaryDirectory() per test.
+#       `.parent.parent` (the tools directory) is deliberately not matched: resolving the
+#       module under test that way is the universal idiom and a source read.
+#   18. MODULE DISCOVERY: every .py file there matches `unittest discover`'s pattern
+#       (test*.py) or says NOT A TEST MODULE in its own text. A file renamed out of the
+#       pattern simply stops running, and a suite total that keeps rising never says so.
+#   19. RUNNER PLACEMENT: a module-level `unittest.main()` ends in sys.exit(), so it must
+#       be the last statement in its file. Anywhere else, a direct run of the file stops
+#       at it and prints OK having skipped everything below, while `discover` runs it all
+#       and the suite total hides the gap. A file with no runner is fine.
+# All three BLOCK: they cannot fire on honest work, and a warning line printed above `OK`
+# is the same silence in a different colour. A test file that will not PARSE only warns,
+# because another session's half-saved edit must not become a commit gate on this one.
+# Silent when there is no tools/tests/. Pure syntax reading: nothing is imported or run.
+DISCOVER_PATTERN = 'test*.py'          # unittest's default; nothing here passes -p
+HELPER_MARKER = 'NOT A TEST MODULE'
+
+fixture_bad, fixture_warn, _fixture_read = [], [], 0
+discover_bad, _discover_seen, _discover_ok = [], 0, 0
+runner_bad, _runner_parsed, _runner_last = [], 0, 0
+_tests_dir = os.path.join(ROOT, 'tools', 'tests')
+if os.path.isdir(_tests_dir):
+    try:
+        import ast as _ast
+
+        def _dotted(node):
+            """`os.path.join` for an attribute chain; '' for anything else."""
+            bits = []
+            while isinstance(node, _ast.Attribute):
+                bits.append(node.attr)
+                node = node.value
+            if not isinstance(node, _ast.Name):
+                return ''
+            bits.append(node.id)
+            return '.'.join(reversed(bits))
+
+        def _names_file(node):
+            """__file__, bare or wrapped in abspath/realpath."""
+            if isinstance(node, _ast.Name) and node.id == '__file__':
+                return True
+            if isinstance(node, _ast.Call) and _dotted(node.func).split('.')[-1] in (
+                    'abspath', 'realpath'):
+                return bool(node.args) and _names_file(node.args[0])
+            return False
+
+        def _is_path_call(node):
+            return (isinstance(node, _ast.Call)
+                    and _dotted(node.func).split('.')[-1] == 'Path'
+                    and bool(node.args) and _names_file(node.args[0]))
+
+        def _self_path(node):
+            """`Path(__file__)`, with an optional .resolve()/.absolute() peeled off.
+
+            Needed for the sibling spellings: `Path(__file__).with_name('x.json')`
+            names a file beside this one without ever mentioning a directory.
+            """
+            if (isinstance(node, _ast.Call) and isinstance(node.func, _ast.Attribute)
+                    and node.func.attr in ('resolve', 'absolute')):
+                node = node.func.value
+            return _is_path_call(node)
+
+        def _own_dir(node):
+            """This file's OWN directory — exactly one step up from __file__.
+
+            Two steps is the tools directory and is not this check's business, so
+            `Path(__file__).resolve().parent.parent` falls through: its inner value is
+            an Attribute rather than the Path(...) call, and _is_path_call says no.
+            """
+            if isinstance(node, _ast.Call):
+                return (_dotted(node.func).split('.')[-1] == 'dirname'
+                        and bool(node.args) and _names_file(node.args[0]))
+            if isinstance(node, _ast.Attribute) and node.attr == 'parent':
+                base = node.value
+                if (isinstance(base, _ast.Call) and isinstance(base.func, _ast.Attribute)
+                        and base.func.attr in ('resolve', 'absolute')):
+                    base = base.func.value
+                return _is_path_call(base)
+            return False
+
+        def _rhs(node):
+            return node.value if isinstance(node, _ast.Constant) and isinstance(
+                node.value, str) else '<expression>'
+
+        # ── check 11's two helpers ──
+        _DEFERRED = (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef, _ast.Lambda)
+
+        def _runner_spellings(tree):
+            """How THIS module spells unittest.main, read off its own imports.
+
+            `unittest` itself is always in the set, even when the import is not at
+            module level: `unittest.main()` means the runner wherever the name came
+            from. A bare `main()` counts only when `from unittest import main` bound
+            it, so an ordinary CLI helper's `main()` is not mistaken for the runner.
+            """
+            mods, bare = {'unittest'}, set()
+            for n in _ast.walk(tree):
+                if isinstance(n, _ast.Import):
+                    for a in n.names:
+                        if a.name == 'unittest':
+                            mods.add(a.asname or 'unittest')
+                elif isinstance(n, _ast.ImportFrom) and n.module == 'unittest':
+                    for a in n.names:
+                        if a.name == 'main':
+                            bare.add(a.asname or 'main')
+            return mods, bare
+
+        def _runs_the_suite(node, mods, bare):
+            """A unittest.main() call inside `node`, not behind a def/class/lambda.
+
+            The boundary is what makes "reaches" mean reaches. A call written inside a
+            function defined here is deferred until something calls that function, and
+            whether anything does is not a question about this file's syntax.
+            """
+            for child in _ast.iter_child_nodes(node):
+                if isinstance(child, _DEFERRED):
+                    continue
+                if isinstance(child, _ast.Call):
+                    _d = _dotted(child.func)
+                    if _d in bare or (_d.count('.') == 1 and _d.endswith('.main')
+                                      and _d.split('.')[0] in mods):
+                        return True
+                if _runs_the_suite(child, mods, bare):
+                    return True
+            return False
+
+        for _tf in sorted(glob.glob(os.path.join(_tests_dir, '*.py'))):
+            _rel = os.path.join('tools/tests', os.path.basename(_tf))
+            _src = open(_tf, encoding='utf-8').read()
+
+            # ── check 10, on the name, before anything needs the file to parse ──
+            _discover_seen += 1
+            if fnmatch.fnmatch(os.path.basename(_tf), DISCOVER_PATTERN):
+                _discover_ok += 1
+            elif HELPER_MARKER not in _src:
+                discover_bad.append(
+                    "%s: `unittest discover` collects `%s`, and this name does not "
+                    "match — so the file contributes no tests and the suite total says "
+                    "nothing about its absence. Rename it to test_*.py if "
+                    "it is a test, or write `%s` in it to declare it a helper."
+                    % (_rel, DISCOVER_PATTERN, HELPER_MARKER))
+
+            try:
+                _tree = _ast.parse(_src, filename=_tf)
+            except SyntaxError as _se:
+                fixture_warn.append('%s: could not be parsed, so it was not checked '
+                                    '(line %s: %s)' % (_rel, _se.lineno, _se.msg))
+                continue
+            _fixture_read += 1
+            # A name bound to the own-directory expression stands in for it, because
+            # the original three all went through one: `here = Path(__file__)...parent`
+            # and then `here / "_tmp_ls_ics.json"` two lines later.
+            _own_names = set()
+            for _n in _ast.walk(_tree):
+                _val = getattr(_n, 'value', None)
+                if isinstance(_n, _ast.Assign) and _own_dir(_val):
+                    for _t in _n.targets:
+                        if _dotted(_t):
+                            _own_names.add(_dotted(_t))
+                elif isinstance(_n, _ast.AnnAssign) and _val is not None and _own_dir(_val):
+                    if _dotted(_n.target):
+                        _own_names.add(_dotted(_n.target))
+
+            def _is_own(node, _names=_own_names):
+                return _own_dir(node) or (_dotted(node) and _dotted(node) in _names)
+
+            for _n in _ast.walk(_tree):
+                _named = None
+                if (isinstance(_n, _ast.BinOp) and isinstance(_n.op, _ast.Div)
+                        and _is_own(_n.left)):
+                    _named = _rhs(_n.right)
+                elif (isinstance(_n, _ast.Call) and _dotted(_n.func).split('.')[-1] == 'join'
+                      and _n.args and _is_own(_n.args[0])):
+                    _named = _rhs(_n.args[1]) if len(_n.args) > 1 else '<expression>'
+                elif (isinstance(_n, _ast.Call) and isinstance(_n.func, _ast.Attribute)
+                      and _n.func.attr == 'joinpath' and _is_own(_n.func.value)):
+                    # `HERE.joinpath("x.json")` — the same thing the / operator does.
+                    _named = _rhs(_n.args[0]) if _n.args else '<expression>'
+                elif (isinstance(_n, _ast.Call) and isinstance(_n.func, _ast.Attribute)
+                      and _n.func.attr in ('with_name', 'with_stem')
+                      and _self_path(_n.func.value)):
+                    # `Path(__file__).with_name("x.json")` — a sibling of this file,
+                    # which is a file in this directory however it is spelled.
+                    _named = _rhs(_n.args[0]) if _n.args else '<expression>'
+                # `<own dir> / '..'` climbs OUT of the tests directory (to the tools
+                # directory, to load the module under test): a source read, the same
+                # idiom as `.parent.parent`, and not a fixture.
+                if _named == '..':
+                    _named = None
+                if _named is not None:
+                    fixture_bad.append(
+                        "%s:%d: builds `%s` inside the tests directory. Two "
+                        "`unittest discover` runs share that path and delete each "
+                        "other's fixture mid-assertion. Give each test a "
+                        "tempfile.TemporaryDirectory(), as the other files here do."
+                        % (_rel, _n.lineno, _named))
+
+            # ── check 11, on the same tree: the runner must be the last statement ──
+            _runner_parsed += 1
+            _mods, _bare = _runner_spellings(_tree)
+            _body = _tree.body
+            _hits = [_i for _i, _s in enumerate(_body)
+                     if not isinstance(_s, _DEFERRED)
+                     and _runs_the_suite(_s, _mods, _bare)]
+            if _hits == [len(_body) - 1]:      # exactly one runner, and it is last
+                _runner_last += 1
+            for _i in _hits:
+                if _i == len(_body) - 1:
+                    continue
+                runner_bad.append(
+                    "%s:%d: `unittest.main()` runs here and ends in sys.exit(), so a "
+                    "direct `python3 %s` run stops at this statement and never reaches "
+                    "the %d top-level statement(s) below it (the last is line %d) — it "
+                    "prints OK having skipped them. `unittest discover` never sets "
+                    "__name__ to \"__main__\", so it runs everything and the suite "
+                    "total hides the gap. Move this to the end of the file."
+                    % (_rel, _body[_i].lineno, _rel, len(_body) - 1 - _i,
+                       _body[-1].lineno))
+    except Exception as _e:
+        # A check that silently stops checking is the failure it exists to prevent.
+        # All three checks ride this one pass, so all three say so when it dies.
+        fixture_bad.append('CHECK COULD NOT RUN: %s: %s' % (type(_e).__name__, _e))
+        discover_bad.append('CHECK COULD NOT RUN: %s: %s' % (type(_e).__name__, _e))
+        runner_bad.append('CHECK COULD NOT RUN: %s: %s' % (type(_e).__name__, _e))
+
+
+# ── check 20: guess words in new wiki prose ───────────────────────────────────
+# "almost certainly", "clearly", "which is why", "must have", "presumably", "no doubt".
+# These are how an inferred fact most often slips into a page as a plain sentence and is
+# read back later as settled; an inference belongs in a `> [!question]` callout or under
+# `status: provisional`. No pattern can tell a guess from knowledge, so only the WORDS are
+# flagged, and only on lines ADDED since origin/main, so the existing wiki never floods
+# the report. guess_words.py holds the rule and sits beside this file. Warns only, capped
+# at eight lines. Silent with no guess_words.py or no origin/main.
+guess_warn = []
+_guess_read = ' (no guess_words.py beside this file - skipped)'
+_guess_tool = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'guess_words.py')
+if os.path.isfile(_guess_tool):
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import guess_words as _gw
+        guess_warn, _guess_note = _gw.scan(ROOT)
+        _guess_read = ' (%s)' % _guess_note
+    except Exception as _e:
+        _guess_read = ' (the check did not finish - see the finding)'
+        guess_warn = ['CHECK COULD NOT RUN: %s: %s' % (type(_e).__name__, _e)]
+
+# ── checks 21 and 22: the numbered postmortem record ──────────────────────────
+# wiki/_postmortems.md numbers its entries, and a number is an EXTERNAL identifier: pages
+# cite an entry as `[[_postmortems]] #N` with nothing but the number to say which one.
+# A heading is `## N.` or `### #N (date): title`; only headings count, anchored at the
+# start of a line, outside frontmatter and fenced code, so a callout that mentions "#7"
+# in prose is never read as a section.
+#   21. NUMBERING. A DUPLICATE number BLOCKS: two sessions that each read "the highest
+#       heading plus one" at the same moment both write the same number, and every
+#       citation to it is ambiguous; the fix is to renumber whichever was published later
+#       and repoint its citations. A SKIPPED number only WARNS: nothing is ambiguous about
+#       a gap, and an old file may have one nobody can explain.
+#   22. FAMILY LINES. From entry number POSTFAM_FROM on, every entry must carry three bold
+#       labels: **Family:** (what went wrong, as the owner saw it), **Neighbours:** (earlier
+#       entries of the same family as #N, or "none: searched <terms>") and **Outcome
+#       check:** (a check on the visible result that catches this entry and its neighbours
+#       without knowing the cause). A label with nothing after it counts as missing. OFF
+#       unless CONFIG['postmortem_family_from'] is set, because it enforces one particular
+#       postmortem template; earlier entries are grandfathered by design.
+# Both silent with no file; an unreadable file degrades the same way instead of raising.
+POSTNUM_FILE = 'wiki/_postmortems.md'
+_POSTNUM_HEADING = re.compile(r'^#{2,3}[ \t]+#?(\d+)(?:[.:)\s]|$)')
+postnum_bad, postnum_warn, postfam_bad = [], [], []
+_pn_read = ' (no {} here - skipped)'.format(POSTNUM_FILE)
+_pf_read = ' (off - set CONFIG["postmortem_family_from"] to enable)'
+_pn_path = os.path.join(ROOT, POSTNUM_FILE)
+if os.path.isfile(_pn_path):
+    _pn_lines = None
+    try:
+        _pn_lines = open(_pn_path, encoding='utf-8', errors='replace').read().split('\n')
+    except OSError as _e:
+        _pn_read = (' ({} could not be read ({}) - nothing reported rather than everything)'
+                    .format(POSTNUM_FILE, type(_e).__name__))
+        if CONFIG['postmortem_family_from'] is not None:
+            _pf_read = ' ({} could not be read)'.format(POSTNUM_FILE)
+    if _pn_lines is not None:
+        _pn_seen, _pn_count = {}, 0
+        _pf_sections = []      
+        for _i, _ln in _unfenced(_pn_lines, _frontmatter_end(_pn_lines)):
+            _pn_m = _POSTNUM_HEADING.match(_ln)
+            if _pn_m:
+                _pn_count += 1
+                _pn_n = int(_pn_m.group(1))
+                _pf_sections.append([_pn_n, _i + 1, [], len(_ln) - len(_ln.lstrip('#'))])
+                if _pn_n in _pn_seen:
+                    postnum_bad.append(
+                        "%s:%d numbers a section #%d and line %d already did. Pages cite an "
+                        "entry as `[[_postmortems]] #%d` with nothing but the number to say "
+                        "which one they mean, so every such citation is now ambiguous. Renumber "
+                        "whichever of the two was published LATER (file order is not publication "
+                        "order) to the highest number here plus one, then repoint the citations "
+                        "that meant it (`grep -rn '#%d' wiki`)."
+                        % (POSTNUM_FILE, _i + 1, _pn_n, _pn_seen[_pn_n], _pn_n, _pn_n))
+                else:
+                    _pn_seen[_pn_n] = _i + 1
+            elif re.match(r'^#{1,6}[ \t]', _ln) and (
+                    not _pf_sections
+                    or len(_ln) - len(_ln.lstrip('#')) <= _pf_sections[-1][3]):
+                # a heading at the same or a shallower level ends the entry; a deeper one
+                # is a sub-heading inside it and stays part of its body
+                _pf_sections.append([None, _i + 1, [], len(_ln) - len(_ln.lstrip('#'))])
+            elif _pf_sections:
+                _pf_sections[-1][2].append(_ln)
+        _pn_read = ' ({} numbered section{} read{})'.format(
+            _pn_count, '' if _pn_count == 1 else 's',
+            ', highest #%d' % max(_pn_seen) if _pn_seen else '')
+        for _pn_n in ([n for n in range(1, max(_pn_seen) + 1) if n not in _pn_seen]
+                      if _pn_seen else []):
+            postnum_warn.append(
+                "%s has no numbered heading for #%d, so the numbering skips it (%d numbered "
+                "section%s read, highest #%d). Nothing is ambiguous when a number is skipped, "
+                "so this warns and never blocks. Leave the gap alone unless you know what was "
+                "deleted; the next entry takes the highest number plus one, never a gap."
+                % (POSTNUM_FILE, _pn_n, _pn_count, '' if _pn_count == 1 else 's', max(_pn_seen)))
+        _pf_from = CONFIG['postmortem_family_from']
+        if _pf_from is not None:
+            _pf_checked = 0
+            for _pf_n, _pf_line, _pf_body, _pf_lvl in _pf_sections:
+                if _pf_n is None or _pf_n < _pf_from:
+                    continue
+                _pf_checked += 1
+                _pf_text = '\n'.join(_pf_body)
+                _pf_missing = []
+                for _lab in ('Family', 'Neighbours', 'Outcome check'):
+                    _m = re.search(r'\*\*' + re.escape(_lab) + r':\*\*[ \t]*(\S[^\n]*)', _pf_text)
+                    if not _m:
+                        _pf_missing.append(_lab)
+                    elif _lab == 'Neighbours' and not re.search(r'#\d+|none: searched \S', _m.group(1)):
+                        _pf_missing.append('Neighbours (needs #N, or "none: searched <terms>")')
+                if _pf_missing:
+                    postfam_bad.append(
+                        "%s:%d postmortem #%d has no %s. Every entry from #%d on names its "
+                        "Family (what went wrong, as the owner saw it), its Neighbours (earlier "
+                        "entries of the same family as #N, or \"none: searched <terms>\") and "
+                        "its Outcome check (the check on the visible result that catches this "
+                        "AND its neighbours without knowing the cause; say whether it exists)."
+                        % (POSTNUM_FILE, _pf_line, _pf_n,
+                           ', '.join('**%s:**' % x for x in _pf_missing), _pf_from))
+            _pf_read = ' ({} section{} from #{} on checked)'.format(
+                _pf_checked, '' if _pf_checked == 1 else 's', _pf_from)
+
+# ── check 23: the top-level map ───────────────────────────────────────────────
+# Every directory at the vault root must be named in backticks in README.md (`wiki/`,
+# `raw/entries/` and `.obsidian` all count). A folder nobody explained is where stray
+# exports, scratch copies and tool output pile up until the owner opens the folder and
+# asks what it is. Every unlisted directory BLOCKS, gitignored ones too: a warning-only
+# rule for ignored folders would miss exactly the case it exists for. `.git` is exempt,
+# as is anything in CONFIG['topmap_exempt']. With no README.md every directory is
+# unlisted, which is the point.
+TOPMAP_FILE = 'README.md'
+topmap_bad = []
+_tm_readme = ''
+try:
+    _tm_readme = open(os.path.join(ROOT, TOPMAP_FILE), encoding='utf-8', errors='replace').read()
+except OSError:
+    pass
+_tm_dirs = sorted(d for d in os.listdir(ROOT)
+                  if d != '.git' and d not in CONFIG['topmap_exempt']
+                  and os.path.isdir(os.path.join(ROOT, d)))
+for _d in _tm_dirs:
+    if re.search(r'`' + re.escape(_d) + r'(?:/[^`]*)?`', _tm_readme):
+        continue
+    topmap_bad.append("%s/ sits at the vault's top level and %s does not name it (as `%s/`). "
+                      "Add one plain line saying what it is, or move it out of the vault "
+                      "(archive, never delete)." % (_d, TOPMAP_FILE, _d))
 
 # ── report ────────────────────────────────────────────────────────────────────
 # Every blocking finding prints an UPPER-CASE tag and every warning a lower-case
@@ -596,6 +1158,65 @@ print("ledger row shape: %d" % len(ledger_bad))
 for x in ledger_bad:
     print("  LEDGER", x)
 
+print("answered questions with no date (warning, does not block): %d" % len(qbank_warn))
+for x in qbank_warn[:10]:
+    print("  qbank/warn", x)
+if len(qbank_warn) > 10:
+    print("  qbank/warn ... and %d more" % (len(qbank_warn) - 10))
+
+print("closing stamps a reader cannot see: %d%s" % (len(half_closed), _added_note))
+for x in half_closed:
+    print("  HALFCLOSED", x)
+
+print("rows a script closed before their date: %d%s" % (len(tool_early), _added_note))
+for x in tool_early:
+    print("  TOOLEARLY", x)
+
+print("test fixture isolation: {}{}".format(
+    len(fixture_bad),
+    " (no tests directory - skipped)" if not os.path.isdir(_tests_dir)
+    else " ({} test file(s) read)".format(_fixture_read)))
+for x in fixture_bad:
+    print("  FIXTURE", x)
+for x in fixture_warn:
+    print("  fixture/warn", x)
+
+print("test module discovery: {}{}".format(
+    len(discover_bad),
+    " (no tests directory - skipped)" if not os.path.isdir(_tests_dir)
+    else " ({} of {} .py file(s) match {})".format(_discover_ok, _discover_seen, DISCOVER_PATTERN)))
+for x in discover_bad:
+    print("  DISCOVERY", x)
+
+print("test runner placement: {}{}".format(
+    len(runner_bad),
+    " (no tests directory - skipped)" if not os.path.isdir(_tests_dir)
+    else " ({} of {} parsed file(s) end in their runner)".format(_runner_last, _runner_parsed)))
+for x in runner_bad:
+    print("  RUNNER", x)
+
+print("guess words in new wiki prose (warning, does not block): {}{}".format(
+    len(guess_warn), _guess_read))
+for x in guess_warn[:8]:
+    print("  guess/warn", x)
+if len(guess_warn) > 8:
+    print("  guess/warn ... and %d more" % (len(guess_warn) - 8))
+
+print("postmortem numbering: {}{}".format(len(postnum_bad), _pn_read))
+for x in postnum_bad[:20]:
+    print("  POSTNUM", x)
+print("postmortem numbering (warning, does not block): %d" % len(postnum_warn))
+for x in postnum_warn[:20]:
+    print("  postnum/warn", x)
+print("postmortem family lines: {}{}".format(len(postfam_bad), _pf_read))
+for x in postfam_bad[:20]:
+    print("  POSTFAM", x)
+
+print("top-level folders missing from README.md: {} ({} folders read)".format(
+    len(topmap_bad), len(_tm_dirs)))
+for x in topmap_bad:
+    print("  TOPMAP", x)
+
 print("date errors: %d" % len(date_bad))
 for x in date_bad:
     print("  DATE", x)
@@ -607,4 +1228,5 @@ if len(date_warn) > 10:
 
 sys.exit(1 if (broken or pollution or orphans_all or log_drift or date_bad or cite_bad
                or graph_bad or CONFLICTED or DUP_BAD or untracked_links
-               or ledger_bad) else 0)
+               or ledger_bad or half_closed or tool_early or fixture_bad or discover_bad
+               or runner_bad or postnum_bad or postfam_bad or topmap_bad) else 0)
