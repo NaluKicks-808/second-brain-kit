@@ -43,7 +43,12 @@ CELL_SPLIT = re.compile(r'(?<!\\)\|')
 # import this rather than copying it: two copies of a rule agree right up until the
 # day they do not.
 CLOSED_WORDS = re.compile(r'^\s*(DONE|DROPPED|SUPERSEDED|CANCELLED|CANCELED)\b', re.I)
-STRUCK = re.compile(r'~~.+~~')
+TAG = re.compile(r'^\s*`\[[^\]]*\]`\s*')
+# A struck title is struck text at the HEAD of the title cell, after the optional
+# `[area]` tag and optional bold markers. Struck text further into the prose is a
+# live row quoting a superseded sentence, not a tombstone: matching it anywhere hid
+# live rows from the agenda.
+STRUCK_TITLE = re.compile(r'^\**\s*~~')
 
 
 def is_closed(trigger, what):
@@ -51,10 +56,10 @@ def is_closed(trigger, what):
     head of either cell, or a struck-through title. Closed rows stay in the Open
     table as tombstones until somebody moves them, so that the record of what was
     dropped survives - they just never reach the agenda."""
-    for cell in (trigger or '', what or ''):
-        if CLOSED_WORDS.match(cell) or STRUCK.search(cell):
-            return True
-    return False
+    if CLOSED_WORDS.match(trigger or ''):
+        return True
+    title = TAG.sub('', what or '').strip()
+    return bool(CLOSED_WORDS.match(title) or STRUCK_TITLE.search(title))
 
 
 def rows(include_closed=False):

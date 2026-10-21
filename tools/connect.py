@@ -40,7 +40,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WIKI = os.path.join(ROOT, 'wiki')
 
 # Machinery, not articles. A mention of the index is not a fact that needs weaving.
-META = set(['_index', 'log', '_reminders', '_postmortems'])
+# `_reminders-archive` holds closed ledger rows moved verbatim; their links were
+# reciprocated when they were written.
+META = set(['_index', 'log', '_reminders', '_reminders-archive', '_postmortems'])
 
 # The folders where a one-way mention is a real gap rather than a note. These are
 # the pages that describe an entity with its own side of the story - a person, a

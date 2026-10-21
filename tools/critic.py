@@ -19,6 +19,8 @@
 #      that has moved on is not frozen behind a stale summary.
 #   4. UNDER-CONNECTED - pages with at most one inbound link: real, but barely woven
 #      into the graph. The linter only fails on a hard zero.
+#   5. SHAPE - long pages that read as a stack of appended deliveries rather than an
+#      article: dated headings, a long unstructured opening, self-referential prose.
 #
 # The loop closes when a session runs this, then acts on the top of list 1.
 
@@ -257,4 +259,46 @@ for n, rel in under[:20]:
     print("  in:%d  %s" % (n, rel))
 print()
 
-print("advisory only - nothing was changed. Feed the top of list 1 into a deepening pass.")
+# ── 5. shape ──────────────────────────────────────────────────────────────────
+# The other half of depth. Section 1 finds pages too THIN for their importance; this
+# finds pages too SHAPELESS for their length. When every absorb appends to the end
+# and nobody rewrites the whole, long pages become stacks of deliveries: headings
+# named for the day a fact arrived, a long unstructured opening, the page narrating
+# its own edit history, bolt-on sections. The fix is a whole-page rewrite that
+# integrates the new facts instead of appending them.
+SHAPE_MIN_WORDS = 2000
+LONG_WORDS = 3000         # soft length cap: past it, big sections move to their own pages
+# Exempt by shape: pages that are chronological by nature (journals, trips, logs).
+# Widen this to match your taxonomy.
+SHAPE_EXEMPT = re.compile(r'/journal-|/trip-|-journal\.md$|-log\.md$')
+SELF_TALK = re.compile(r"\b(the (wiki|vault) (first|had|has|holds|now|last|does not)|"
+                       r"this page('s)? (counted|records|keeps|holds|said)|"
+                       r"the page (keeps|records|holds|says)|rather than promoting|"
+                       r"a future session)\b", re.I)
+MONTHS = r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*'
+print("=== 5. SHAPE (pages over %d words that read as a stack of deliveries - rewrite whole) ===" % SHAPE_MIN_WORDS)
+print("  dated: H2s named for a date · lead: words before the first H2 · self: page talks about itself · long: over the %d-word soft cap" % LONG_WORDS)
+shape = []
+for base, p in pages.items():
+    if base in META or base.startswith('_') or p['words'] < SHAPE_MIN_WORDS \
+            or SHAPE_EXEMPT.search(p['rel']):
+        continue
+    body = strip(p['text'])
+    h2 = re.findall(r'^## (.*)', body, flags=re.M)
+    dated = sum(1 for h in h2 if re.search(r'\b20\d\d-\d\d|\b%s \d{1,2}\b' % MONTHS, h))
+    lead = len(re.split(r'^## ', body, maxsplit=1, flags=re.M)[0].split())
+    self_talk = len(SELF_TALK.findall(body))
+    score = dated + (lead > 400) * 3 + self_talk + (p['words'] > LONG_WORDS) * 3
+    if score >= 3:
+        shape.append((score * (1 + p['inbound'] / 10), dated, lead, self_talk, p))
+shape.sort(key=lambda x: -x[0])
+if not shape:
+    print("  none - every long page reads as an article.")
+for _, dated, lead, self_talk, p in shape[:20]:
+    print("  %6dw  in:%3d  dated:%2d lead:%5d self:%2d long:%d  %s"
+          % (p['words'], p['inbound'], dated, lead, self_talk, int(p['words'] > LONG_WORDS), p['rel']))
+if len(shape) > 20:
+    print("  ... and %d more" % (len(shape) - 20))
+print()
+
+print("advisory only - nothing was changed. Feed the top of list 1 into a deepening pass and the top of list 5 into a whole-page rewrite.")
