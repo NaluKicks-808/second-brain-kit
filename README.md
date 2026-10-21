@@ -1,5 +1,7 @@
 # Second Brain Starter Kit
 
+> **Combined setup:** this kit now ships inside [agent-brain-harness](https://github.com/NaluKicks-808/agent-brain-harness), which sets up this second brain together with a Manager, leads and workers team in one install, on macOS, Windows and Linux. Use agent-brain-harness for new setups; this repository stays available as the brain on its own.
+
 A repository you clone to get a working, empty second brain that Claude Code writes and maintains for you: a compiled wiki of short, cited, interlinked articles sitting on top of a verbatim archive of everything it was built from. It ships with the gates that keep the wiki honest, so a commit is refused while a link is broken or a fact has only been written down on one side.
 
 Built by Evan Nalu Foster. This is the machinery of my own second brain with my life taken out.
