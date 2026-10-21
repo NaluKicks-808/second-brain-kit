@@ -82,8 +82,50 @@ class Quiz(unittest.TestCase):
             def boom(prompt):
                 raise RuntimeError("no model")
             run = bq.run_quiz(d, answer_call=boom, judge_call=boom, today="2026-10-21", workers=1)
-            self.assertEqual(run["score"], 0.0)
             self.assertIn("call failed", run["results"][0]["note"])
+
+    def test_judge_failure_aborts_without_writing(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_root(d, 2)
+
+            def boom(prompt):
+                raise RuntimeError("expired login")
+            before = open(os.path.join(d, "wiki", "_reminders.md")).read()
+            run = bq.run_quiz(d, answer_call=answerer(), judge_call=boom, today="2026-10-21",
+                              workers=1, file_ledger_row=True)
+            self.assertIsNone(run["score"])
+            self.assertIn("expired login", run["aborted"])
+            self.assertFalse(os.path.exists(os.path.join(d, "quiz", "runs")))
+            self.assertFalse(os.path.exists(os.path.join(d, "quiz", "trend.md")))
+            self.assertEqual(open(os.path.join(d, "wiki", "_reminders.md")).read(), before)
+            empty = bq.run_quiz(d, answer_call=answerer(), judge_call=lambda p: "no json here",
+                                today="2026-10-21", workers=1)
+            self.assertIn("no verdicts", empty["aborted"])
+
+    def test_partial_run_is_never_the_baseline(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_root(d, 2)
+            bq.run_quiz(d, answer_call=answerer(), judge_call=judger(["right"]), today="2026-10-20",
+                        only="q0", workers=1)
+            self.assertTrue(os.path.exists(os.path.join(d, "quiz", "runs", "2026-10-20.partial.json")))
+            self.assertFalse(os.path.exists(os.path.join(d, "quiz", "trend.md")))
+            run = bq.run_quiz(d, answer_call=answerer(), judge_call=judger(["right", "partly"]),
+                              today="2026-10-21", workers=1)
+            self.assertIsNone(run["previous_score"])
+            self.assertEqual(run["threshold"], "")
+
+    def test_hand_written_quiz_row_is_never_overwritten(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_root(d, 1)
+            p = os.path.join(d, "wiki", "_reminders.md")
+            mine = "| 2026-11-01 | Date | **Add Brain quiz questions for the new project** | w |"
+            open(p, "w").write(LEDGER.replace("| 2026-10-01 | Date | **Other.** | w |", mine))
+            run = bq.run_quiz(d, answer_call=answerer(), judge_call=judger(["wrong"]), today="2026-10-21",
+                              workers=1, file_ledger_row=True)
+            self.assertEqual(run["ledger"], "filed")
+            text = open(p).read()
+            self.assertIn(mine, text)
+            self.assertEqual(text.count("Brain quiz fell"), 1)
 
     def test_plain_text_answer_accepted(self):
         with tempfile.TemporaryDirectory() as d:

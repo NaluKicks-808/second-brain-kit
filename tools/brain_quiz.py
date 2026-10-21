@@ -34,7 +34,10 @@ schema; the kit ships none of its own). Output: quiz/runs/YYYY-MM-DD.json and on
 appended line in quiz/trend.md. With --file-row, a score under 75% or a drop of 10
 points against the previous run files ONE open row in wiki/_reminders.md (bumped in
 place if one is already open, never duplicated). A partial run (--limit / --only)
-never alarms.
+never alarms: it is written as quiz/runs/YYYY-MM-DD.partial.json, stays out of
+trend.md and is never the baseline for the next run. A judge failure (non-zero exit,
+timeout, missing CLI, no verdicts) aborts the run: no score, no file, no trend line,
+no ledger row, exit 1.
 
 Usage:
     python3 tools/brain_quiz.py --dry-run          # print the plan; no calls, no writes
@@ -208,13 +211,18 @@ def append_trend(root, run):
 
 def previous_score(root, today_name):
     d = os.path.join(root, QDIR, 'runs')
+    # Full runs only: a partial run (--limit/--only) is written as YYYY-MM-DD.partial.json
+    # and never becomes the baseline a full run is compared against.
     names = sorted(n for n in (os.listdir(d) if os.path.isdir(d) else [])
-                   if n.endswith('.json') and n != today_name)
+                   if n.endswith('.json') and not n.endswith('.partial.json') and n != today_name)
     for n in reversed(names):
         try:
             with open(os.path.join(d, n), encoding='utf-8') as f:
-                return json.load(f)['score']
-        except (OSError, ValueError, KeyError):
+                doc = json.load(f)
+            if doc.get('partial'):
+                continue
+            return doc['score']
+        except (OSError, ValueError, KeyError, AttributeError):
             continue
     return None
 
@@ -250,7 +258,9 @@ def file_row(root, run_rel, score, why, today):
         if re.match(r'^\|[\s:|-]+\|$', s) and sep is None:
             sep = i
             continue
-        if s.startswith('|') and ROW_MARK in s and not re.match(r'^\|\s*(DONE|DROPPED|SUPERSEDED)\b', s, re.I) \
+        # Only the row this tool wrote: its title opens `**Brain quiz fell to`. A hand-written
+        # row that merely mentions the quiz is somebody's task and is never overwritten.
+        if s.startswith('|') and '**{} fell to '.format(ROW_MARK) in s and not re.match(r'^\|\s*(DONE|DROPPED|SUPERSEDED)\b', s, re.I) \
                 and '~~' not in s:
             lines[i] = row
             with open(path, 'w', encoding='utf-8') as f:
@@ -278,11 +288,14 @@ def run_quiz(root=ROOT, questions_path=None, answer_call=None, judge_call=None, 
     today = today or dt.date.today().isoformat()
     with cf.ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
         answers = dict((a['id'], a) for a in ex.map(lambda q: ask(q, answer_call), qs))
+    judge_error = ''
     try:
         verdicts = judge(qs, answers, root, judge_call)
     except Exception as e:
         verdicts = {}
-        print('judge failed: {}'.format(e), file=sys.stderr)
+        judge_error = '{}: {}'.format(type(e).__name__, e)
+    if not verdicts and any(not answers[q['id']]['error'] for q in qs) and not judge_error:
+        judge_error = 'the judge returned no verdicts'
     results = []
     for q in qs:
         a, v = answers[q['id']], verdicts.get(q['id'], {})
@@ -300,7 +313,14 @@ def run_quiz(root=ROOT, questions_path=None, answer_call=None, judge_call=None, 
            'stale_suspects': sum(r['stale_suspect'] for r in results),
            'gold_rechecks': sum(bool(r['gold_needs_recheck']) for r in results),
            'mean_pages': round(sum(r['pages'] for r in results) / n, 1), 'results': results}
-    run_rel = '{}/runs/{}.json'.format(QDIR, today)
+    if judge_error:
+        # No answer was graded, so there is no score: writing 0% would file a false alarm and
+        # make the next good run look like a jump. The run is aborted and nothing is written.
+        print('judge failed, run aborted, nothing written: {}'.format(judge_error), file=sys.stderr)
+        run.update({'score': None, 'aborted': judge_error, 'threshold': '', 'previous_score': None})
+        return run
+    run['partial'] = partial
+    run_rel = '{}/runs/{}{}.json'.format(QDIR, today, '.partial' if partial else '')
     prev = previous_score(root, today + '.json')
     run['previous_score'] = prev
     why = breach(run['score'], prev) if results and not partial else ''
@@ -308,7 +328,8 @@ def run_quiz(root=ROOT, questions_path=None, answer_call=None, judge_call=None, 
     os.makedirs(os.path.join(root, QDIR, 'runs'), exist_ok=True)
     with open(os.path.join(root, run_rel), 'w', encoding='utf-8') as f:
         f.write(json.dumps(run, indent=1, ensure_ascii=False) + '\n')
-    append_trend(root, run)
+    if not partial:
+        append_trend(root, run)       # the trend is full runs only
     if why and file_ledger_row:
         run['ledger'] = file_row(root, run_rel, run['score'], why, today)
     return run
@@ -350,7 +371,10 @@ def main(argv=None):
         run = run_quiz(a.root, qpath, command_caller(a.answer_cmd, a.root),
                        command_caller(a.judge_cmd, scratch), limit=a.limit, only=a.only,
                        workers=a.workers, file_ledger_row=a.file_row)
-    print(trend_line(run))
+    if run.get('aborted'):
+        print('ABORTED: {} - no score, no trend line, no ledger row'.format(run['aborted']))
+        return 1
+    print(trend_line(run) + (' (partial run: not in trend.md, never a baseline)' if run.get('partial') else ''))
     if run.get('threshold'):
         print('THRESHOLD: {} -> ledger {}'.format(run['threshold'], run.get('ledger', 'not filed (use --file-row)')))
     return 0
