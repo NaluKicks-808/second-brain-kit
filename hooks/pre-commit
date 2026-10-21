@@ -58,7 +58,10 @@ CONNECT_OUT=$(python3 tools/connect.py 2>&1); CONNECT_RC=$?
 # second is a crash: a traceback the GAP grep cannot see would otherwise pass a commit, and a
 # GAP-only exit reported as "crashed" sends a session looking for a bug that is not there.
 # GAP and NEW are the two non-zero exits this gate can account for; anything else is a crash.
-if printf '%s\n' "$CONNECT_OUT" | grep -q 'Traceback' \
+# A Python crash prints `Traceback (most recent call last):` at the START of a line. connect.py
+# also echoes wiki lines (indented) under CLAIM RECIPROCITY, and a page that merely mentions a
+# traceback must not read as a crash, so only the anchored header counts.
+if printf '%s\n' "$CONNECT_OUT" | grep -q '^Traceback (most recent call last):' \
    || { [ "$CONNECT_RC" -ne 0 ] && ! printf '%s\n' "$CONNECT_OUT" | grep -qE '^  (GAP|NEW) '; }; then
   printf '%s\n' "$CONNECT_OUT"
   echo ""

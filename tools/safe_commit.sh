@@ -675,6 +675,18 @@ record_the_override() {
     exit 1
   fi
 
+  # Stage ONLY the block this run appended when wiki/log.md is not one of the named files:
+  # another session sharing the checkout may have its own uncommitted appends in it, and
+  # `git add` on the whole file would publish them under this run's message. The index copy
+  # plus our block becomes the staged blob; the file on disk keeps everyone's lines.
+  local log_named=0 f blob
+  for f in "${FILES[@]}"; do [ "$f" = "$LOG_FILE" ] && log_named=1; done
+  if [ "$log_named" -eq 0 ] && git cat-file -e ":$LOG_FILE" 2>/dev/null \
+     && ! git diff --quiet -- "$LOG_FILE" 2>/dev/null; then
+    blob=$( { git cat-file blob ":$LOG_FILE" && cat "$tmp"; } | git hash-object -w --stdin ) \
+      && [ -n "$blob" ] && git update-index --cacheinfo "100644,$blob,$LOG_FILE" \
+      && { rm -f "$tmp"; echo "ok override recorded in $LOG_FILE under [$when_date]; only this block is staged - other uncommitted lines in that file stay unstaged"; return 0; }
+  fi
   if ! git add -- "$LOG_FILE"; then
     echo "x COULD NOT RECORD THE OVERRIDE - nothing was committed."
     echo "  The block was appended to $LOG_FILE but git would not stage it, so the record and the"
@@ -773,12 +785,42 @@ gate_run_here_or_refuse() {
   return 0
 }
 
+# True when the hook path sits inside this repository: its git dir, its common git dir, or
+# this working tree. Paths are compared physically (pwd -P), since /tmp and the like are links.
+hook_is_ours() {
+  local dir gd cd_ root
+  # The hooks folder may not exist yet: resolve its nearest existing ancestor instead,
+  # which is inside the repository exactly when the folder would be.
+  dir=$(dirname "$1")
+  while [ ! -d "$dir" ] && [ "$dir" != "/" ] && [ "$dir" != "." ]; do dir=$(dirname "$dir"); done
+  dir=$(cd "$dir" 2>/dev/null && pwd -P) || return 1
+  gd=$(cd "$(git rev-parse --git-dir 2>/dev/null)" 2>/dev/null && pwd -P) || gd=""
+  cd_=$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P) || cd_=""
+  for root in "$gd" "$cd_" "$THIS_TREE"; do
+    [ -n "$root" ] || continue
+    case "$dir/" in "$root"/*) return 0 ;; esac
+  done
+  return 1
+}
+
 # Called once, immediately before the commit, and only when there is a commit to make.
 ensure_the_gate_is_installed() {
   local hook err
 
   if ! hook=$(gate_hook_path); then
     gate_run_here_or_refuse "git would not say where it looks for hooks - \`git rev-parse --git-path hooks/pre-commit\` failed"
+    return 0
+  fi
+
+  # A hooks folder OUTSIDE this repository (a machine-wide core.hooksPath) is shared by every
+  # repository on the machine. This vault's gate refuses any commit where tools/lint.py is
+  # missing, so installing it there would block commits everywhere else. Never write there:
+  # run the tracked gate here instead, every time.
+  if ! hook_is_ours "$hook"; then
+    if [ -x "$hook" ] && [ -f "$TRACKED_GATE" ] && [ "$(gate_logic "$hook")" = "$(gate_logic "$TRACKED_GATE")" ]; then
+      return 0
+    fi
+    gate_run_here_or_refuse "git looks for hooks outside this repository, at $hook (core.hooksPath); this vault's gate is not installed there because every other repository would run it"
     return 0
   fi
 
@@ -919,6 +961,39 @@ replay_onto() {          # $1 = what main holds now, $2 = the commit to replay o
   return 0
 }
 
+# A replayed commit is built by merge-tree and commit-tree, which run no hooks, so the tree
+# about to be pushed - upstream plus this run's edits - has never been through the gate.
+# In commit-first mode that is every run where origin moved; in the normal mode it is the
+# race inside the push loop. Check it in a throwaway detached worktree of that exact commit,
+# which reads and writes no file in this checkout. Returns 1 (and prints why) on red.
+gate_the_replayed_tree() {        # $1 = the replayed commit
+  local c="$1" wt out rc=0
+  if [ "$NO_VERIFY" -eq 1 ]; then
+    echo "i replayed tree not re-gated: this run skips the gate by --no-verify, recorded in $LOG_FILE"
+    return 0
+  fi
+  if ! git cat-file -e "$c:$TRACKED_GATE" 2>/dev/null; then
+    echo "x the replayed tree has no $TRACKED_GATE, so it cannot be gated."
+    return 1
+  fi
+  wt=$(mktemp -d "${TMPDIR:-/tmp}/second-brain-gate.XXXXXX") || { echo "x could not make a temp folder to gate the replayed tree"; return 1; }
+  rmdir "$wt" 2>/dev/null || true
+  if ! out=$(git worktree add -q --detach "$wt" "$c" 2>&1); then
+    echo "x could not check out the replayed tree to gate it:"
+    printf '%s\n' "$out" | sed 's/^/      /'
+    return 1
+  fi
+  out=$(cd "$wt" && bash "$TRACKED_GATE" 2>&1) || rc=$?
+  git worktree remove --force "$wt" >/dev/null 2>&1 || true
+  if [ "$rc" -ne 0 ]; then
+    echo "x the tree that would be pushed (main as it is now, plus this commit) fails the gate:"
+    printf '%s\n' "$out" | sed 's/^/      /'
+    return 1
+  fi
+  echo "ok replayed tree gated clean"
+  return 0
+}
+
 say_the_commit_is_safe() {
   if [ "$THIS_RUN_COMMITTED" -eq 1 ]; then
     echo "  Your commit is made and is safe in this checkout:"
@@ -931,6 +1006,12 @@ say_the_commit_is_safe() {
 }
 
 rerun_command() {
+  # The rerun must PULL first, which commit-first mode never does: with
+  # SECOND_BRAIN_COMMIT_BEFORE_PULL=1 still exported it would fetch, recommit on the same
+  # stale base and hit the same conflict for ever. So the printed command switches it off.
+  if [ "$COMMIT_FIRST" -eq 1 ]; then
+    printf 'SECOND_BRAIN_COMMIT_BEFORE_PULL=0 '
+  fi
   if [ "$STAGE_ALL" -eq 1 ]; then
     echo "./tools/safe_commit.sh --all \"<the same message>\""
   elif [ "$NO_VERIFY" -eq 1 ]; then
@@ -1042,6 +1123,12 @@ for i in 1 2 3; do
   echo "another session pushed first - rebasing this commit onto theirs, without touching"
   echo "  any file here (try $i of 3)"
   if replay_onto "$UPSTREAM" "$PUBLISH"; then
+    if ! gate_the_replayed_tree "$REPLAY_NEW"; then
+      echo "x NOT PUBLISHED - what main holds now, plus this commit, does not pass the gate."
+      say_the_commit_is_safe
+      say_how_to_get_it_out
+      exit 1
+    fi
     PUBLISH="$REPLAY_NEW"
     continue
   fi
