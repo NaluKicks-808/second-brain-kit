@@ -6,7 +6,7 @@ Replace this paragraph with one sentence saying whose brain this is and what it 
 
 ## The one idea
 
-**You are a writer, not a filing clerk.** The wiki is a map of a mind, not a folder of facts. The question is never "where do I put this?" It is: **what does this mean, and how does it connect to what is already here?** A good entry touches five to fifteen existing articles. A great one reveals a pattern that deserves an article of its own.
+**You are a writer, not a filing clerk.** The wiki is a map of a mind, not a folder of facts. The question is never "where do I put this?" It is: **what does this mean, and how does it connect to what is already here?** Connect a new fact to every page it genuinely touches, and to no page it does not. A forced link is worse than a missing one. A recurring pattern deserves an article of its own.
 
 ## Structure
 
@@ -43,7 +43,7 @@ Turn a raw source into normalized entries. Auto-detect the format: an export, a 
 
 ### ABSORB
 
-The core loop. For each entry: read it and understand what it means; check `_index.md` for the articles it touches; **reread each of those articles in full before editing it**, never edit blind; ask what new dimension this adds, and update or create articles; fix the cross-links in both directions; append a line to `log.md`. Checkpoint roughly every fifteen entries with a quality audit.
+The core loop. For each entry: read it and understand what it means; check `_index.md` for the articles it touches; **read the passage you are changing before you change it, and the whole page before a substantial rewrite**, never edit blind; ask what new dimension this adds, and update or create articles; fix the cross-links in both directions; append a line to `log.md`.
 
 #### The closing ritual (mandatory, before every commit)
 
@@ -56,7 +56,7 @@ Then update `_index.md`, append to `log.md`, and commit with `./tools/safe_commi
 
 **Name the files. Only the files you touched.** The obvious alternative stages the whole working tree, which means a session commits work it has never opened. In the vault this came from that happened three times in one evening: one session's work landed inside another's commit, so the git log, which later sessions reason from, became fiction; the gates ran over a mixed changeset and blessed pages nobody had read; and a half-written page was published by a session with no idea it was mid-edit. A session always knows what it edited. `--all` remains for a sweep that genuinely owns the whole tree, and it prints what it is about to take, so a sweep is a decision rather than an accident.
 
-The commit script also holds an advisory lock for the commit-and-push window, so two sessions cannot interleave, and it self-heals after ten minutes if a session dies holding it. If you run several sessions at once, another one may have pushed while you worked. The script rebases first, refuses to proceed over conflict markers, runs the same gates through the hook, and retries the push through races. Never pop another session's stash.
+The commit script also holds an advisory lock for the commit-and-push window, so two sessions cannot interleave, and it self-heals after ten minutes if a session dies holding it. If you run several sessions at once, another one may have pushed while you worked. The script rebases first, refuses to proceed over conflict markers, runs the same gates through the hook, and retries the push through races. Never pop another session's stash. `wiki/log.md` merges by union and `wiki/_reminders.md` through `tools/ledger_merge.py` (both set in `.gitattributes`); no other file joins those rules, because a union merge keeps both halves of a real conflict. Skipping the gate with `--no-verify` is allowed only with a reason, and the script writes that reason and the findings it accepted into `log.md` with the commit, so an override is a record rather than a secret.
 
 #### The weave-back rule
 
@@ -70,7 +70,7 @@ This matters most in the case that feels safest. A turn that ends on a question 
 
 #### The system-change rule
 
-If a session adds, changes or retires any automation or standing system, a scheduled task, a hook, a pipeline, a notification channel, it records that in the same session, before the commit. Documentation about systems rots unless the change and the document travel together. A periodic audit comparing what is documented against what actually runs is a backstop, not a mechanism.
+If a session adds, changes or retires any automation or standing system, a scheduled task, a hook, a pipeline, a notification channel, it records that in the same session, before the commit. Documentation about systems rots unless the change and the document travel together. A periodic audit comparing what is documented against what actually runs is a backstop, not a mechanism. The same holds for a change that never touches git at all, such as a database migration, an environment variable on a host, a scheduled job loaded or unloaded: it has no commit to remind anyone, so it is written on its page before the next reply that reports it.
 
 ### QUERY
 
@@ -81,6 +81,7 @@ Answer from the wiki, not from memory, and retrieve **search first**. This is th
 3. **Fall back to the index only** when the question has no good keyword, or when the search returns nothing.
 4. **Synthesize with citations** back to the pages you used. A genuinely useful answer can be filed as a new article.
 5. **Never answer "what is outstanding" from a copy of the ledger read earlier in the session.** Run `python3 tools/agenda.py`. A long session outlives its own reads, and it cannot tell from the inside that its copy has gone stale. This is the same bug as reading a clock once and using the number twelve hours later.
+6. **Check the brain, not just the pages.** `python3 tools/brain_quiz.py` asks a fixed set of questions you wrote, with their right answers, and scores what the brain answers. A drop in the score is the first sign a rewrite lost something.
 
 ### CLEANUP
 
@@ -90,57 +91,28 @@ The health check that keeps the brain honest. Flag contradictions between articl
 
 The growth loop, and the other half of self-improvement. The linter and the reciprocity check keep the brain consistent; they are gates that block bad state. `python3 tools/critic.py` keeps it growing. It reads the vault and surfaces its own highest-leverage gaps: pages the vault treats as important or well-sourced but that are still thin, every recorded open question gathered into one queue, central pages going stale, and pages barely woven into the graph. It is advisory and never edits. The loop closes when a session runs it and then acts on the top of the deepening list, mining the source layer under the normal absorb discipline.
 
-## Writing standard: an encyclopedia, not a chatbot
+### THE ACTIVE LAYER (optional)
 
-This is the anti-slop, anti-hallucination guardrail, and it is not negotiable.
+Some owners add automation on top of the brain: a morning brief, a nightly pass, phone notifications, a dashboard. If you do, give its working files their own folder and keep one rule: **that folder holds machinery and indexes, never knowledge.** Facts about the owner's life go into `wiki/` pages. A status file the automation keeps is an index that points at pages, one line per item, and a paragraph of fact found there is a bug, because it is the second copy that drifts. Every automated pass is bound by this constitution first and its own prompt second, runs the closing ritual before it commits, and is listed somewhere a session can find it.
 
-- **Readable prose, not an evidence locker.** Inline source-telling mid-sentence chokes the writing. Keep detailed citations in the `sources:` frontmatter or in one short trailing note, and let the sentences flow. Link generously: a paragraph naming several known entities should carry several `[[wikilinks]]`, not one. Dates belong where they carry meaning, not scattered as confetti.
-- **Flat, factual, encyclopedic.** No peacock words (legendary, visionary, groundbreaking, game-changing), no rhetorical questions, no "interestingly", no editorializing.
-- **Attribution over assertion.** Write "she decided X because Y" or "the audit found Z", not "brilliantly, X". If a claim came from a source, it should read like it.
-- **Every load-bearing claim cites its source**, as an anchored link into `raw/entries/` or as a plain-text `data/` filename. An article with no citations is a red flag.
-- **At most two direct quotes per article**, kept for the ones that carry real weight.
-- **Summary first.** Every article opens with one sentence saying what it is, so that a query can tell at a glance whether the page is worth opening.
-- **Never hard-wrap prose.** Obsidian renders a single newline as a line break, so wrapped lines read as ragged fragments. One paragraph is one line, however long. A blank line between paragraphs. The same inside callouts and list items.
-
-## Anti-patterns
-
-**Anti-cramming.** It is always easier to bolt a paragraph onto a big article than to spin up a new one. Resist. Five bloated articles are worse than thirty focused ones. When a subtopic reaches about three meaningful sentences, it has earned its own page.
-
-**Anti-thinning.** No empty stubs. Every touch should enrich. A one-line placeholder is debt.
-
-**The compiled layer characterises; the source layer stays complete.** Some material is sensitive, and the temptation is to leave it out of the archive. Do not. `raw/entries/` keeps the full text, because total capture is the entire reason the vault is worth anything, and carving an exception for the parts that are uncomfortable is how an archive quietly becomes a curated self-portrait. A `wiki/` page may state plainly what is true about a relationship or a situation without reproducing a line of it. Mark such entries `private: true` in their frontmatter and exclude them from any compiled digest.
+## Evidence, delegation and dates (every session)
 
 **Measure a corpus before you delegate it.** A subagent cannot tell you its slice was too big if nobody measured the slice. Hand a worker more text than fits in its context and it will run out of room partway and write a confident summary of whatever it happened to read, with no way for you to see that from the outside. Every coverage rule tends to govern READING, and none of them govern DELEGATING, because delegation feels like scheduling rather than reading. So: compute the token weight of any corpus before handing it off; partition it to fit; require each worker to report **coverage as a fraction** ("read 1,847 of 1,847") rather than the word "absorbed"; and require a shortfall to be declared before writing rather than footnoted after. Give parallel workers **disjoint write surfaces**, one new file each, with no shared files and no git, because several agents queued behind one blocking commit gate will deadlock. The parent integrates them serially.
 
-**Anything the owner wrote gets normalized WHOLE.** Absorb quarries facts, and a primary source in the owner's own voice is not a quarry. The failure this prevents is specific and expensive: an application essay was absorbed by a pass looking for events, the events were mined out correctly, and the essay itself was left as a PDF plus a handful of excerpts, with the rest deferred to a curator who did not exist. Six weeks later the owner asked their own brain for their personal statement and it returned no matches, while phrases they had actually written appeared on zero pages. So: when the source is something the owner wrote or said, an essay, an application, a talk, a letter, a voice memo, the full text goes into `raw/entries/` verbatim before any mining begins, split by its own headings with block anchors, and the wiki quarries from there. Facts are what the vault concludes. The owner's writing is evidence, and evidence is kept whole. A deferral note naming a curator who does not exist is a tombstone, not a plan.
+**Local models where they are good enough, cloud where they are better.** This is a cost preference, not a privacy rule, unless the owner says otherwise in the second paragraph of this file. Free local transcription and vision first; a cloud model when quality decides.
 
 **Re-read the clock before writing any date.** A clock reading goes stale; a fact does not. Long sessions cross midnight, and a session that read the date at the start and uses it at the end will stamp files with yesterday. Two rules follow. The clock is the one input that must be re-read at the moment of use and never carried forward. And a relative word, today, tomorrow, this week, must be resolved against a fresh reading and then written as an absolute date, never left relative in a file. Note also that a correction can cause the next error: a session burned for using tomorrow's date will be primed to treat that date as wrong long after it has become today's.
 
-**An artifact is not a fact.** A meeting notetaker has two layers and they are not equal evidence. The **transcript** is what people said. The **summary, the action items and the assignees are the tool's tidy reading of it**, and tidying is exactly where a hypothetical, a conditional and a "we were just spitballing" get promoted into decisions. Cite the transcript. Treat a generated bullet as a lead to verify, never as the fact. Four specific traps, each of which has been paid for:
+**One agenda.** `wiki/_reminders.md` is the only list of what is still outstanding. Never create a second one in a project folder. A row that is only true until a moment ("waiting on the 3pm call") carries `expires: YYYY-MM-DDTHH:MM` in its last cell, and `tools/expire_rows.py` closes it once that moment passes, so the agenda never states a stale moment as current. A task file beside some code is invisible to the brain, so the two drift and neither gets trusted. Split it instead: what is outstanding and when it fires goes in a ledger row, and how to do it, the commands, the checks, goes in that project's runbook. Writing the ledger AND a second copy is not compliance; duplicating into a new home is the failure, not the remedy for it.
 
-- **The assignee is metadata about whose account recorded the call**, not evidence of who owns the task. Most tools attribute to the account holder.
-- **A recorder does not stop when the other side hangs up.** Late transcript material is often the team talking privately. A number, a commitment or an opinion in the last minute may never have been said to the client at all, so never write "quoted", "agreed" or "priced at" from a recording without asking the owner.
-- **An unattributed summary bullet reads as consensus, and usually is not.** A summary strips the "I think we should" off a sentence and leaves something that sounds like a resolution the room reached. A bullet with no speaker is evidence that a topic came up. It is never evidence of whose idea it was, and never evidence that anybody agreed.
-- **A generated action item is the notetaker's inference, not a promise anybody made.** A session once absorbed a notetaker's checkbox as an obligation nobody had made, gave it a deadline the summary did not carry, and escalated it into a brief. The transcript underneath showed somebody volunteering the thing and being thanked for it. An offer is not an obligation, a courtesy is not a deadline, and "sounds good" is not a request. Before a generated checkbox becomes a ledger row, read the sentence that produced it and record who wanted it and how strongly. The tell that this has gone wrong is the owner reading their own ledger and asking where an item came from.
+## Writing the wiki
 
-**When a transcript cannot settle who said something, say so instead of inferring.** Speaker labels are unreliable across every notetaker, and a recording with more than one voice and no working speaker separation is not evidence of who said what. Attribution inferred from content is a reading, and a reading hardens the moment three pages cite it. Where it matters, show the owner the least certain passages with their surrounding text and let them settle each one in a sentence each. Where it cannot be settled, the vault writes "one of them said". It never picks.
-
-**One agenda.** `wiki/_reminders.md` is the only list of what is still outstanding. Never create a second one in a project folder. A task file beside some code is invisible to the brain, so the two drift and neither gets trusted. Split it instead: what is outstanding and when it fires goes in a ledger row, and how to do it, the commands, the checks, goes in that project's runbook. Writing the ledger AND a second copy is not compliance; duplicating into a new home is the failure, not the remedy for it.
-
-## Article shapes
-
-Guides, not cages.
-
-- **Person**, organized by role and relationship phase, not chronology.
-- **Concept or pattern**, thesis, how it works, where it applies, open questions.
-- **Decision**, situation, options, reasoning, what was chosen, how it has held up.
-- **Project**, what it is, status, architecture, the live risks, what is next.
-- **Playbook**, a living how-to that compounds, such as objections and what actually landed.
+The writing standard, the evidence and anti-pattern rules, the article shapes, the frontmatter fields and the no-hard-wrap formatting rule live in `.claude/rules/wiki-writing.md`. Claude Code loads that file automatically whenever a session reads or edits anything under `wiki/` or `raw/`, so it costs nothing in a session that never touches a page. A session that writes vault pages any other way (a script, a worker brief) reads it first. One rule from it holds everywhere in the vault: never hard-wrap prose; one paragraph is one line.
 
 ## Golden rules
 
 1. **The owner curates what enters `data/`; the assistant does all the upkeep.** That division is the whole point.
 2. **Never invent. Blank beats wrong.** Uncited synthesis that sounds right is the failure mode, and it is very hard to detect later.
-3. **Frontmatter on every article:** `type`, `updated` as YYYY-MM-DD, and `sources` as a list. Use `[[wikilinks]]` throughout.
+3. **Frontmatter on every article:** `type`, `updated` as YYYY-MM-DD, and `sources` as a list, plus the structured fields by type listed in `.claude/rules/wiki-writing.md`. Use `[[wikilinks]]` throughout.
 4. **The `data/` originals are immutable.** Corrections happen in `wiki/`, with a note, never by rewriting history.
 5. **A rule that fails twice becomes a gate.** Write the failure into `wiki/_postmortems.md`, and install something mechanical in the same session. Prose is the weakest possible fix, because a session reads this file once and then works for hours.
